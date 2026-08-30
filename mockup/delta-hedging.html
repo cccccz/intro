@@ -1,0 +1,1672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>intro mock · Delta hedging</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --paper: #ffffff;
+      --ink: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --mark: #dbeafe;
+      --mark-open: #bfdbfe;
+      --pin: #eff6ff;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+    .chrome {
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #fff;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      font-size: 13px;
+    }
+    header strong { font-weight: 650; color: var(--accent); }
+    header .hint { color: var(--muted); }
+    header label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    header select, header button {
+      font: inherit;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 6px;
+      padding: 4px 8px;
+      color: var(--ink);
+    }
+    header button { cursor: pointer; }
+    header button:hover:not(:disabled) { background: #eff6ff; border-color: #bfdbfe; }
+    header button:disabled { opacity: 0.35; cursor: default; }
+    .view-switch {
+      display: flex;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-left: 4px;
+    }
+    .view-switch button {
+      border: 0;
+      border-radius: 0;
+      border-right: 1px solid var(--line);
+      background: #fff;
+    }
+    .view-switch button:last-child { border-right: 0; }
+    .view-switch button.on {
+      background: #eff6ff;
+      color: var(--accent);
+    }
+    .col-only { display: inline-flex; align-items: center; gap: 16px; }
+    .col-only.dim { opacity: 0.35; pointer-events: none; }
+    .workspace {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .pin-strip {
+      flex-shrink: 0;
+      height: 124px;
+      display: flex;
+      flex-direction: row;
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: #fff;
+    }
+    .pin-empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pin-cell {
+      flex: 0 0 16rem;
+      min-width: 16rem;
+      height: 100%;
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      background: var(--paper);
+    }
+    .pin-cell-hd {
+      display: flex;
+      justify-content: flex-end;
+      flex-shrink: 0;
+      padding: 2px 6px 0;
+    }
+    .pin-cell-hd button {
+      font: inherit;
+      font-size: 12px;
+      border: 0;
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .pin-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 4px 12px 10px;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .pin-body p { margin: 0.4em 0; }
+    .h-split {
+      flex-shrink: 0;
+      height: 6px;
+      cursor: ns-resize;
+      background: var(--line);
+      z-index: 6;
+    }
+    .h-split:hover, .h-split.dragging { background: #93c5fd; }
+    .v-split {
+      flex: 0 0 6px;
+      width: 6px;
+      cursor: ew-resize;
+      background: var(--line);
+      z-index: 5;
+      align-self: stretch;
+    }
+    .v-split:hover, .v-split.dragging { background: #93c5fd; }
+    .crumbs {
+      padding: 6px 16px;
+      font-size: 12px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    .crumbs b { color: var(--ink); font-weight: 600; }
+    .crumbs button {
+      font: inherit;
+      color: inherit;
+      border: 0;
+      background: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    .crumbs button:hover { color: var(--accent); }
+    .crumbs span.on { color: var(--ink); }
+    .board {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+    .stage {
+      display: flex;
+      flex-direction: row;
+      height: 100%;
+      min-height: 0;
+    }
+    .wires {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 4;
+    }
+    .wires path {
+      fill: none;
+      stroke: #93c5fd;
+      stroke-width: 1.4;
+      opacity: 0.5;
+    }
+    .wires path.hot {
+      stroke: #2563eb;
+      stroke-width: 2;
+      opacity: 1;
+    }
+    .col {
+      background: var(--paper);
+      display: flex;
+      flex-direction: column;
+      min-width: 8rem;
+      overflow: hidden;
+      flex: 1 1 0;
+    }
+    .col-body {
+      padding: 18px 20px 40px;
+      overflow: auto;
+      line-height: 1.55;
+      font-size: 16.5px;
+      flex: 1;
+    }
+    .col-body.stack { padding: 0; }
+    .card {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px 22px;
+    }
+    .card-hd {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .card-hd strong { color: var(--ink); font-size: 13px; }
+    .card-hd .from { font-size: 11px; }
+    .empty {
+      color: var(--muted);
+      padding: 28px 18px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .col-body p { margin: 0.7em 0; }
+    .col-body h3 {
+      font-size: 15px;
+      margin: 1.2em 0 0.4em;
+      font-weight: 650;
+    }
+    .eq {
+      margin: 0.85em 0;
+      overflow-x: auto;
+    }
+    .fig-ph {
+      margin: 0.8em 0;
+      padding: 10px 12px;
+      border: 1px dashed var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+    mark.rivet {
+      background: var(--mark);
+      padding: 0 2px;
+      cursor: pointer;
+      border-radius: 2px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    mark.rivet.open { background: var(--mark-open); }
+    mark.rivet.hot, .card.hot {
+      outline: 1.5px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .card.hot { background: #f8fafc; }
+    mark.rivet:hover { outline: 1px solid var(--accent); }
+    .case {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      margin: 10px 0;
+      background: #f8fafc;
+    }
+    .case h4 { margin: 0 0 6px; font-size: 14px; }
+    .note {
+      font-size: 14px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .fake-menu {
+      position: fixed;
+      z-index: 20;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+      padding: 6px;
+      font-family: inherit;
+      font-size: 13px;
+      display: none;
+    }
+    .fake-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      background: none;
+      padding: 6px 10px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    .fake-menu button:hover { background: #eff6ff; }
+    .toast {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e3a8a;
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .toast.show { opacity: 1; }
+    .src { font-size: 12px; color: var(--muted); margin-top: 2em; }
+    .tree-pane, .grid-pane {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      background: #fff;
+    }
+    .tree-pane { padding: 16px 20px 40px; }
+    .tree {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .tree .tree {
+      padding-left: 1.25rem;
+      margin-left: 0.35rem;
+      border-left: 1px solid var(--line);
+    }
+    .tree-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      width: 100%;
+      text-align: left;
+      font: inherit;
+      border: 0;
+      background: none;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--ink);
+    }
+    .tree-row:hover { background: #eff6ff; }
+    .tree-row.open { background: #f8fafc; }
+    .tree-row .name { font-weight: 600; font-size: 14px; }
+    .tree-row .via {
+      font-size: 12px;
+      color: var(--muted);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tree-row .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--line);
+      flex-shrink: 0;
+    }
+    .tree-row.open .dot { background: var(--accent); }
+    .note-grid {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      align-items: start;
+    }
+    .grid-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      min-width: 0;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    .grid-card:hover { border-color: #bfdbfe; }
+    .grid-card.open { outline: 1.5px solid var(--accent); outline-offset: 0; }
+    .grid-card-hd {
+      padding: 8px 10px 6px;
+      font-size: 13px;
+      font-weight: 650;
+      border-bottom: 1px solid var(--line);
+    }
+    .grid-preview {
+      padding: 8px 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      max-height: 9.5rem;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .grid-preview p { margin: 0.4em 0; }
+    .grid-preview .eq { margin: 0.4em 0; transform: scale(0.92); transform-origin: top left; }
+    .graph-pane {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 16px 20px 24px;
+      overflow: auto;
+      background: #f8fafc;
+    }
+    .minimap-meta {
+      flex-shrink: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin: 0 auto 12px;
+      width: min(40rem, 100%);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .minimap-meta b { color: var(--ink); font-weight: 600; }
+    .minimap-wrap {
+      margin: 0 auto;
+      width: max-content;
+      max-width: 100%;
+    }
+    .minimap {
+      display: grid;
+      gap: 2px;
+      width: max-content;
+      background: transparent;
+    }
+    .mm-host, .mm-empty, .mm-cell {
+      width: 12px;
+      height: 12px;
+      min-width: 12px;
+      min-height: 12px;
+      padding: 0;
+      border: 0;
+      border-radius: 2px;
+      display: block;
+    }
+    .mm-host { background: #e2e8f0; cursor: default; }
+    .mm-empty { background: #f1f5f9; }
+    .mm-cell {
+      background: #93c5fd;
+      cursor: default;
+    }
+    .mm-cell.open { background: #2563eb; }
+    .mm-cell.hot { outline: 1px solid #1e3a8a; outline-offset: 0; }
+    .mm-tip {
+      position: fixed;
+      z-index: 30;
+      max-width: 16rem;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: #111827;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+      display: none;
+    }
+    .mm-tip.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="chrome">
+  <header>
+    <strong>intro</strong>
+    <span class="hint">展示用假页面 · 无存储</span>
+    <div class="view-switch" role="tablist" aria-label="视图">
+      <button type="button" role="tab" data-view="columns" class="on" aria-selected="true">列</button>
+      <button type="button" role="tab" data-view="tree" aria-selected="false">树</button>
+      <button type="button" role="tab" data-view="grid" aria-selected="false">网格</button>
+      <button type="button" role="tab" data-view="graph" aria-selected="false">地图</button>
+    </div>
+    <span class="col-only" id="colOnly">
+    <label>同时显示几列
+      <select id="colCap">
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+      </select>
+    </label>
+    <button type="button" id="panLeft" aria-label="向左移窗口">←</button>
+    <button type="button" id="panRight" aria-label="向右移窗口">→</button>
+    <button type="button" id="pinSel">置顶选区</button>
+    </span>
+    <button type="button" id="resetPath">只留宿主</button>
+  </header>
+  <div class="crumbs" id="crumbs"></div>
+  </div>
+  <div class="workspace">
+  <div class="pin-strip" id="pinStrip"></div>
+  <div class="h-split" id="hSplit" role="separator" aria-orientation="horizontal" aria-label="调整置顶区高度"></div>
+  <div class="board" id="board">
+    <div class="stage" id="stage"></div>
+    <svg class="wires" id="wires" aria-hidden="true"></svg>
+  </div>
+  <div class="tree-pane" id="treePane" hidden></div>
+  <div class="grid-pane" id="gridPane" hidden></div>
+  <div class="graph-pane" id="graphPane" hidden></div>
+  </div>
+  <div class="fake-menu" id="menu">
+    <button type="button" data-act="pin">置顶这一截</button>
+    <button type="button" data-act="new">新建侧边</button>
+    <button type="button" data-act="reuse">复用已有笔记…</button>
+    <button type="button" data-act="excerpt">节选已有笔记中的一段…</button>
+  </div>
+  <div class="toast" id="toast"></div>
+  <div class="mm-tip" id="mmTip"></div>
+
+  <script>
+    const docs = {
+      host: {
+        title: "Delta hedging",
+        html: `
+          <p>Consider a portfolio</p>
+          <div class="eq">\\[\\Pi = V(S,t) - \\Delta S\\]</div>
+          <p>The underlying follows a
+            <mark class="rivet" data-to="gbm">lognormal random walk</mark>
+            \\(dS = \\mu S\\,dt + \\sigma S\\,dX\\).</p>
+          <p>From \\(t\\) to \\(t+dt\\),</p>
+          <div class="eq">\\[d\\Pi = dV - \\Delta\\, dS\\]</div>
+          <p><mark class="rivet" data-to="ito">By Itô's Lemma</mark>,</p>
+          <div class="eq">\\[dV = \\frac{\\partial V}{\\partial t}\\,dt + \\frac{\\partial V}{\\partial S}\\,dS + \\frac12 \\sigma^2 S^2 \\frac{\\partial^2 V}{\\partial S^2}\\,dt\\]</div>
+          <p>so</p>
+          <div class="eq">\\[d\\Pi = \\Bigl(\\frac{\\partial V}{\\partial t} + \\frac12 \\sigma^2 S^2 \\frac{\\partial^2 V}{\\partial S^2}\\Bigr)dt + \\Bigl(\\frac{\\partial V}{\\partial S} - \\Delta\\Bigr)dS\\]</div>
+          <p>deterministic terms, then random terms. If we choose
+            <mark class="rivet" data-to="delta">\\(\\Delta = \\partial V/\\partial S\\)</mark>,
+            then no randomness.</p>
+          <p>Any reduction in randomness is generally termed
+            <mark class="rivet" data-to="hedging">hedging</mark>.</p>
+          <p>The perfect elimination of risk by exploiting
+            <mark class="rivet" data-to="two">the correlation between two instruments</mark>
+            is called delta hedging.</p>
+          <p>Delta hedging belongs to a
+            <mark class="rivet" data-to="dynamic">dynamic hedging</mark>
+            strategy, in comparison with static hedging.</p>
+          <p>After the hedge, the portfolio increment is deterministic. We still owe an account a return:
+            the claim
+            <mark class="rivet" data-to="arb">\\(d\\Pi = r\\Pi\\,dt\\)</mark>.</p>
+          <p class="src">source / notes · 手稿 1 为宿主；手稿 2 挂在最后这个铆点上。</p>
+        `
+      },
+      gbm: {
+        title: "Lognormal random walk",
+        html: `
+          <p>The SDE \\(dS = \\mu S\\,dt + \\sigma S\\,dX\\) is geometric Brownian motion:
+          returns are independent of the price level, so \\(S\\) stays positive.</p>
+          <p class="fig-ph">〔图：对数正态随机游走，纵轴 \(S\)、横轴 Time。图片能力未做，此处文字占位。〕</p>
+          <p>\\(dX\\) is a
+            <mark class="rivet" data-to="wx">Wiener increment</mark>
+            (Brownian motion): mean zero, variance \\(dt\\), and
+            \\((dX)^2 = dt\\) in the Itô calculus.</p>
+          <p class="note">这一列仍是完整宿主，可以再划。</p>
+        `
+      },
+      wx: {
+        title: "Brownian motion",
+        html: `
+          <p>\\(X_t\\) is standard Brownian motion: continuous paths, independent Gaussian increments
+          \\(X_{t+dt}-X_t \\sim \\mathcal N(0,dt)\\).</p>
+          <p>This is as far as the demo chain goes. A real note would stop or link out to a textbook chapter.</p>
+        `
+      },
+      ito: {
+        title: "Itô's Lemma",
+        html: `
+          <p>If \\(V=V(S,t)\\) and \\(S\\) has diffusion \\(\\sigma S\\), the chain rule picks up a second-order term from
+          \\((dS)^2\\):</p>
+          <div class="eq">\\[dV = V_t\\,dt + V_S\\,dS + \\tfrac12 V_{SS}(dS)^2\\]</div>
+          <p>and \\((dS)^2 = \\sigma^2 S^2\\,dt\\) after dropping \\((dt)^2\\) and \\(dt\\,dX\\).</p>
+          <p><mark class="rivet" data-to="ito-proof">Proof of Itô's Lemma</mark> — 手稿上写的是 link to another file / view。</p>
+          <p>The extra \\(\\tfrac12 \\sigma^2 S^2 V_{SS}\\,dt\\) is why a delta-hedged option is not just
+          \\(V_t\\,dt\\): convexity (gamma) still earns or costs drift.</p>
+        `
+      },
+      "ito-proof": {
+        title: "Proof of Itô's Lemma",
+        html: `
+          <p class="note">占位。真页面会是另一篇宿主（Taylor + 二次变差），不是这里写完的证明。</p>
+          <p>Taylor expand \\(V(S+dS, t+dt)\\), keep terms of order \\(dt\\), replace \\((dS)^2\\) by its quadratic variation.</p>
+        `
+      },
+      delta: {
+        title: "The hedge ratio",
+        html: `
+          <p>The coefficient of the random \\(dS\\) in \\(d\\Pi\\) is \\(V_S - \\Delta\\). Setting
+          \\(\\Delta = V_S\\) cancels it.</p>
+          <p>\\(\\Delta\\) is the number of units of the underlying held short against the option.
+          It must be refreshed as \\(S\\) and \\(t\\) move — that is why this is dynamic.</p>
+        `
+      },
+      hedging: {
+        title: "Hedging",
+        html: `
+          <p>Hedging: any reduction in randomness. It need not be perfect.</p>
+          <p>Delta hedging is the special case that aims to cancel the first-order exposure to \\(S\\).</p>
+        `
+      },
+      two: {
+        title: "Two instruments",
+        html: `
+          <p>In this derivation the two instruments are <em>an option and its underlying</em>.</p>
+          <p>Correlation here is not a statistical estimate: both are functions of the same \\(S\\),
+          so their infinitesimal moves share the \\(dS\\) term.</p>
+        `
+      },
+      dynamic: {
+        title: "Dynamic vs static",
+        html: `
+          <p>Static: put on a hedge and leave it. Dynamic: rebalance \\(\\Delta\\) as the greeks change.</p>
+          <p>A one-time stock holding cannot keep \\(V_S - \\Delta = 0\\) for all later \\(S\\).</p>
+        `
+      },
+      arb: {
+        title: "No-arbitrage: \\(d\\Pi = r\\Pi\\,dt\\)",
+        html: `
+          <p>After choosing \\(\\Delta = V_S\\),</p>
+          <div class="eq">\\[d\\Pi = \\Bigl(\\frac{\\partial V}{\\partial t} + \\tfrac12 \\sigma^2 S^2 \\frac{\\partial^2 V}{\\partial S^2}\\Bigr)dt\\]</div>
+          <p><strong>Claim.</strong> \\(d\\Pi = r\\Pi\\,dt\\): the risk-free change in \\(\\Pi\\) equals the growth
+          from a risk-free interest-bearing account.</p>
+          <p>Exploiting an arbitrage opportunity will cause the price of the option to move in the
+          direction that eliminates the arbitrage.</p>
+          <div class="case">
+            <h4><mark class="rivet" data-to="case1">Case 1: \\(d\\Pi &gt; r\\Pi\\,dt\\)</mark></h4>
+            <p>Portfolio grows faster than the bank. Borrow \\(\\Pi\\), hold the delta-hedged book.</p>
+          </div>
+          <div class="case">
+            <h4><mark class="rivet" data-to="case2">Case 2: \\(d\\Pi &lt; r\\Pi\\,dt\\)</mark></h4>
+            <p>Short the option and delta-hedge: \\(-\\Pi = -V + \\Delta S\\). Put the cash in the bank.</p>
+          </div>
+        `
+      },
+      case1: {
+        title: "Case 1 · long the book",
+        html: `
+          <p>Borrow \\(\\Pi\\) from the bank. Make a portfolio of value \\(\\Pi\\) by delta hedging.</p>
+          <p>At the end of the day:</p>
+          <div class="eq">\\[\\text{profit} = (\\Pi + d\\Pi) - (r\\Pi\\,dt + \\Pi) = d\\Pi - r\\Pi\\,dt &gt; 0\\]</div>
+          <p>No net initial capital, guaranteed profit — arbitrage. Option prices must move until this cannot happen.</p>
+        `
+      },
+      case2: {
+        title: "Case 2 · short the book",
+        html: `
+          <p>Short the option and delta hedge. The book is \\(-\\Pi = -V + \\Delta S\\).</p>
+          <p>So \\(\\Pi\\) is borrowed and put in the bank.</p>
+          <p>At the end of the day:</p>
+          <div class="eq">\\[\\text{profit} = (\\Pi + r\\Pi\\,dt) - (\\Pi + d\\Pi) = r\\Pi\\,dt - d\\Pi &gt; 0\\]</div>
+          <p>\\(\\Pi + r\\Pi\\,dt\\) is money from the bank;
+          \\(\\Pi + d\\Pi\\) is used to close the position.</p>
+        `
+      }
+    };
+
+    let pid = 1;
+    let pinSeq = 1;
+    let pins = [];
+    let menuRivet = null;
+    let nodes = [{ id: "p0", doc: "host", parent: null, via: null, level: 0 }];
+    let viewStart = 0;
+    let cap = 3;
+    let pinH = 124;
+    let colWeights = [1, 1, 1];
+    const menu = document.getElementById("menu");
+
+    function displayTitle(docId) {
+      if (docId === "arb") return "No-arbitrage";
+      return docs[docId].title.replace(/\\\(.*?\\\)/g, "dΠ = rΠ dt");
+    }
+
+    function childrenOf(id) {
+      return nodes.filter((n) => n.parent === id);
+    }
+
+    function atLevel(level) {
+      return nodes.filter((n) => n.level === level);
+    }
+
+    function maxLevel() {
+      return nodes.reduce((m, n) => Math.max(m, n.level), 0);
+    }
+
+    function descendants(id) {
+      const out = [];
+      childrenOf(id).forEach((c) => {
+        out.push(c.id);
+        descendants(c.id).forEach((d) => out.push(d));
+      });
+      return out;
+    }
+
+    let shellView = "columns";
+    let structKids = null;
+    let structParent = null;
+
+    function rivetSnippet(el) {
+      return el.textContent.replace(/\s+/g, " ").trim();
+    }
+
+    function buildStructure() {
+      structKids = {};
+      structParent = { host: null };
+      const seen = new Set();
+      function walk(id) {
+        if (seen.has(id) || !docs[id]) return;
+        seen.add(id);
+        structKids[id] = [];
+        const wrap = document.createElement("div");
+        wrap.innerHTML = docs[id].html;
+        wrap.querySelectorAll("mark.rivet").forEach((m) => {
+          const to = m.dataset.to;
+          if (!docs[to]) return;
+          structKids[id].push({ to: to, via: rivetSnippet(m) });
+          if (structParent[to] === undefined) structParent[to] = id;
+          walk(to);
+        });
+      }
+      walk("host");
+    }
+
+    function isDocOpen(docId) {
+      return nodes.some((n) => n.doc === docId);
+    }
+
+    function docChain(docId) {
+      const chain = [];
+      let cur = docId;
+      const guard = new Set();
+      while (cur && !guard.has(cur)) {
+        guard.add(cur);
+        chain.unshift(cur);
+        cur = structParent[cur];
+      }
+      return chain;
+    }
+
+    function mountNode(parentNodeId, toId) {
+      const existing = nodes.find((n) => n.parent === parentNodeId && n.via === toId);
+      if (existing) return existing;
+      const parent = nodes.find((n) => n.id === parentNodeId);
+      const node = {
+        id: "p" + pid++,
+        doc: toId,
+        parent: parentNodeId,
+        via: toId,
+        level: parent.level + 1
+      };
+      nodes.push(node);
+      setRivetOpen(parentNodeId, toId, true);
+      const col = ensureCol(node.level);
+      const body = col.querySelector(".col-body");
+      if (body && !body.querySelector('.card[data-node="' + node.id + '"]')) {
+        body.appendChild(makeCard(node));
+      }
+      return node;
+    }
+
+    function openDocPath(docId) {
+      if (!structKids) buildStructure();
+      const chain = docChain(docId);
+      let parentNodeId = "p0";
+      let target = nodes[0];
+      for (let i = 1; i < chain.length; i++) {
+        target = mountNode(parentNodeId, chain[i]);
+        parentNodeId = target.id;
+      }
+      ensureLevel(target.level);
+      setShell("columns");
+      requestAnimationFrame(() => {
+        onLayout();
+        if (target.level > 0) alignCard(target);
+        setHot(target.id);
+      });
+    }
+
+    function setShell(view) {
+      shellView = view;
+      const cols = view === "columns";
+      document.getElementById("pinStrip").hidden = !cols;
+      document.getElementById("hSplit").hidden = !cols;
+      document.getElementById("board").hidden = !cols;
+      document.getElementById("treePane").hidden = view !== "tree";
+      document.getElementById("gridPane").hidden = view !== "grid";
+      document.getElementById("graphPane").hidden = view !== "graph";
+      document.getElementById("colOnly").classList.toggle("dim", !cols);
+      document.querySelectorAll(".view-switch button").forEach((b) => {
+        const on = b.dataset.view === view;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      render();
+    }
+
+    function treeItem(docId, via) {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tree-row" + (isDocOpen(docId) ? " open" : "");
+      btn.dataset.doc = docId;
+      btn.innerHTML = '<span class="dot"></span><span class="name"></span>';
+      btn.querySelector(".name").textContent = displayTitle(docId);
+      if (via) {
+        const v = document.createElement("span");
+        v.className = "via";
+        v.textContent = "← " + via;
+        btn.appendChild(v);
+      }
+      li.appendChild(btn);
+      const kids = structKids[docId] || [];
+      if (kids.length) {
+        const ol = document.createElement("ol");
+        ol.className = "tree";
+        kids.forEach((k) => ol.appendChild(treeItem(k.to, k.via)));
+        li.appendChild(ol);
+      }
+      return li;
+    }
+
+    function renderTree() {
+      if (!structKids) buildStructure();
+      const pane = document.getElementById("treePane");
+      const ol = document.createElement("ol");
+      ol.className = "tree";
+      ol.appendChild(treeItem("host", null));
+      pane.replaceChildren(ol);
+    }
+
+    function flattenStructure() {
+      if (!structKids) buildStructure();
+      const rows = [];
+      function walk(id, depth) {
+        rows.push({ id: id, depth: depth });
+        (structKids[id] || []).forEach((k) => walk(k.to, depth + 1));
+      }
+      walk("host", 0);
+      return rows;
+    }
+
+    function renderGrid() {
+      const rows = flattenStructure();
+      const maxD = rows.reduce((m, r) => Math.max(m, r.depth), 0);
+      const pane = document.getElementById("gridPane");
+      const grid = document.createElement("div");
+      grid.className = "note-grid";
+      grid.style.gridTemplateColumns = "repeat(" + (maxD + 1) + ", minmax(12rem, 1fr))";
+      rows.forEach((r) => {
+        const card = document.createElement("article");
+        card.className = "grid-card" + (isDocOpen(r.id) ? " open" : "");
+        card.dataset.doc = r.id;
+        card.style.gridColumn = String(r.depth + 1);
+        const hd = document.createElement("div");
+        hd.className = "grid-card-hd";
+        hd.textContent = displayTitle(r.id);
+        const prev = document.createElement("div");
+        prev.className = "grid-preview";
+        prev.innerHTML = docs[r.id].html;
+        card.appendChild(hd);
+        card.appendChild(prev);
+        grid.appendChild(card);
+      });
+      pane.replaceChildren(grid);
+      renderMath(grid);
+    }
+
+    function measureHostRivets() {
+      const probe = document.createElement("div");
+      probe.style.cssText =
+        "position:absolute;left:-9999px;top:0;width:28rem;font-size:16.5px;line-height:1.55;";
+      probe.innerHTML = docs.host.html;
+      document.body.appendChild(probe);
+      const hostH = Math.max(probe.scrollHeight, 1);
+      const marks = [...probe.querySelectorAll("mark.rivet")].map((m) => ({
+        to: m.dataset.to,
+        y: m.offsetTop / hostH
+      }));
+      probe.remove();
+      return marks;
+    }
+
+    function notesFromAnchor(anchorId) {
+      const byD = {};
+      let maxD = 0;
+      function walk(id, depth) {
+        maxD = Math.max(maxD, depth);
+        if (!byD[depth]) byD[depth] = [];
+        byD[depth].push(id);
+        (structKids[id] || []).forEach((k) => walk(k.to, depth + 1));
+      }
+      walk(anchorId, 1);
+      return { byD: byD, maxD: maxD };
+    }
+
+    function gapCells(dy) {
+      return Math.max(0, Math.min(8, Math.round(dy * 24)));
+    }
+
+    function mapRowList(marks) {
+      const rows = [];
+      const lead = gapCells(marks.length ? marks[0].y : 1);
+      for (let i = 0; i < lead; i++) rows.push({ cells: {} });
+      marks.forEach((m, i) => {
+        const notes = notesFromAnchor(m.to);
+        const counts = [];
+        for (let d = 1; d <= notes.maxD; d++) counts.push((notes.byD[d] || []).length);
+        const n = Math.max.apply(null, counts.concat([1]));
+        for (let k = 0; k < n; k++) {
+          const cells = {};
+          for (let d = 1; d <= notes.maxD; d++) {
+            const id = (notes.byD[d] || [])[k];
+            if (id) cells[d] = id;
+          }
+          rows.push({ cells: cells });
+        }
+        const nextY = i + 1 < marks.length ? marks[i + 1].y : 1;
+        const g = gapCells(nextY - m.y);
+        for (let j = 0; j < g; j++) rows.push({ cells: {} });
+      });
+      return rows;
+    }
+
+    function mmSquare(cls, docId) {
+      const el = document.createElement("span");
+      el.className = cls;
+      if (docId) {
+        el.dataset.doc = docId;
+        el.dataset.label = docId === "host" ? "宿主" : displayTitle(docId);
+        if (docId !== "host" && isDocOpen(docId)) el.classList.add("open");
+      }
+      return el;
+    }
+
+    function renderGraph() {
+      if (!structKids) buildStructure();
+      const marks = measureHostRivets();
+      const rows = mapRowList(marks);
+      let maxD = 1;
+      flattenStructure().forEach((r) => {
+        if (r.depth > maxD) maxD = r.depth;
+      });
+      const pane = document.getElementById("graphPane");
+      const wrap = document.createElement("div");
+      wrap.className = "minimap-wrap";
+      const meta = document.createElement("div");
+      meta.className = "minimap-meta";
+      const sideN = flattenStructure().length - 1;
+      meta.innerHTML =
+        "<span>左列是宿主 · 往右更深 · 中间空格是正文距离</span><span>最深 <b>" +
+        maxD +
+        "</b> 层 · 侧边 <b>" +
+        sideN +
+        "</b> 篇</span>";
+      const map = document.createElement("div");
+      map.className = "minimap";
+      map.style.gridTemplateColumns = "repeat(" + (maxD + 1) + ", 12px)";
+      rows.forEach((row, ri) => {
+        const r = ri + 1;
+        const host = mmSquare("mm-host", "host");
+        host.style.gridColumn = "1";
+        host.style.gridRow = String(r);
+        map.appendChild(host);
+        for (let d = 1; d <= maxD; d++) {
+          const id = row.cells[d];
+          const el = id ? mmSquare("mm-cell", id) : mmSquare("mm-empty");
+          el.style.gridColumn = String(d + 1);
+          el.style.gridRow = String(r);
+          map.appendChild(el);
+        }
+      });
+      wrap.appendChild(meta);
+      wrap.appendChild(map);
+      pane.replaceChildren(wrap);
+    }
+
+    function clampView() {
+      const hi = Math.max(maxLevel(), cap - 1);
+      viewStart = Math.max(0, Math.min(viewStart, Math.max(0, hi - cap + 1)));
+    }
+
+    function ensureLevel(level) {
+      if (level < viewStart) viewStart = level;
+      else if (level > viewStart + cap - 1) viewStart = level - cap + 1;
+      clampView();
+    }
+
+    function toast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => el.classList.remove("show"), 1800);
+    }
+
+    function renderMath(root) {
+      if (!window.renderMathInElement) return;
+      renderMathInElement(root, {
+        delimiters: [
+          { left: "\\[", right: "\\]", display: true },
+          { left: "\\(", right: "\\)", display: false }
+        ],
+        throwOnError: false
+      });
+    }
+
+    function renderPins() {
+      const strip = document.getElementById("pinStrip");
+      strip.innerHTML = "";
+      if (!pins.length) {
+        const empty = document.createElement("div");
+        empty.className = "pin-empty";
+        empty.textContent = "划词后点「置顶选区」，这段会出现在上面这条矮带里，再钉就往右加。";
+        strip.appendChild(empty);
+        return;
+      }
+      pins.forEach((p) => {
+        const cell = document.createElement("article");
+        cell.className = "pin-cell";
+        cell.dataset.node = p.sourceNodeId;
+        cell.dataset.pin = p.id;
+        cell.innerHTML =
+          '<div class="pin-cell-hd"><button type="button" data-unpin="' +
+          p.id +
+          '">取下</button></div><div class="pin-body"></div>';
+        const body = cell.querySelector(".pin-body");
+        body.innerHTML = p.html;
+        const src = nodes.find((n) => n.id === p.sourceNodeId) || nodes[0];
+        bindRivets(body, src);
+        renderMath(cell);
+        strip.appendChild(cell);
+      });
+      strip.scrollLeft = strip.scrollWidth;
+    }
+
+    function addPin(sourceNodeId, html) {
+      if (!html || !html.trim()) {
+        toast("先划一段再置顶");
+        return;
+      }
+      pins.push({ id: "pin" + pinSeq++, sourceNodeId: sourceNodeId, html: html });
+      renderPins();
+    }
+
+    function texOf(el) {
+      const ann = el.querySelector('annotation[encoding="application/x-tex"]');
+      return (ann && ann.textContent) ? ann.textContent : "";
+    }
+
+    function katexRoot(el) {
+      if (!el || !el.closest) return null;
+      return el.closest(".katex-display") || el.closest(".katex");
+    }
+
+    function replaceKatexWithTex(root) {
+      root.querySelectorAll(".katex-display").forEach((el) => {
+        el.replaceWith(document.createTextNode("\\[" + texOf(el) + "\\]"));
+      });
+      root.querySelectorAll(".katex").forEach((el) => {
+        el.replaceWith(document.createTextNode("\\(" + texOf(el) + "\\)"));
+      });
+    }
+
+    function nodeToSourceHtml(el) {
+      const wrap = document.createElement("div");
+      wrap.appendChild(el.cloneNode(true));
+      replaceKatexWithTex(wrap);
+      return wrap.innerHTML;
+    }
+
+    function expandRangeOverKatex(range) {
+      const r = range.cloneRange();
+      const startEl =
+        r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+      const endEl =
+        r.endContainer.nodeType === 1 ? r.endContainer : r.endContainer.parentElement;
+      const sk = katexRoot(startEl);
+      const ek = katexRoot(endEl);
+      if (sk) r.setStartBefore(sk);
+      if (ek) r.setEndAfter(ek);
+      return r;
+    }
+
+    function captureSelection() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+      const range = sel.getRangeAt(0);
+      let node = range.commonAncestorContainer;
+      if (node.nodeType !== 1) node = node.parentElement;
+      const holder = node && node.closest("[data-node]");
+      if (!holder) return null;
+      const wrap = document.createElement("div");
+      wrap.appendChild(expandRangeOverKatex(range).cloneContents());
+      replaceKatexWithTex(wrap);
+      return { sourceNodeId: holder.dataset.node, html: wrap.innerHTML };
+    }
+
+    let hotId = null;
+    const levelCols = {};
+
+    function rivetEl(node) {
+      const parent = document.querySelector('[data-node="' + node.parent + '"]');
+      if (!parent) return null;
+      return parent.querySelector('mark.rivet[data-to="' + node.via + '"]');
+    }
+
+    function cardEl(nodeId) {
+      return document.querySelector('.card[data-node="' + nodeId + '"]');
+    }
+
+    function bindRivets(root, node) {
+      const openVia = new Set(childrenOf(node.id).map((c) => c.via));
+      root.querySelectorAll("mark.rivet").forEach((m) => {
+        m.setAttribute("role", "button");
+        m.tabIndex = 0;
+        m.classList.toggle("open", openVia.has(m.dataset.to));
+      });
+    }
+
+    function setRivetOpen(parentId, via, open) {
+      const parent = document.querySelector('[data-node="' + parentId + '"]');
+      const m = parent && parent.querySelector('mark.rivet[data-to="' + via + '"]');
+      if (m) m.classList.toggle("open", open);
+    }
+
+    function inClip(el, clip) {
+      const a = el.getBoundingClientRect();
+      const b = clip.getBoundingClientRect();
+      return a.bottom > b.top + 2 && a.top < b.bottom - 2;
+    }
+
+    function sourceInView(node) {
+      const rivet = rivetEl(node);
+      if (!rivet) return false;
+      const parentCard = rivet.closest(".card");
+      if (parentCard && parentCard.hidden) return false;
+      const parentCol = rivet.closest(".col-body");
+      if (!parentCol) return false;
+      return inClip(rivet, parentCol);
+    }
+
+    function syncCardVisibility() {
+      const hi = maxLevel();
+      for (let lv = 1; lv <= hi; lv++) {
+        atLevel(lv).forEach((n) => {
+          const card = cardEl(n.id);
+          if (!card) return;
+          card.hidden = !sourceInView(n);
+        });
+        updateEmpty(lv);
+      }
+    }
+
+    function onLayout() {
+      if (shellView !== "columns") return;
+      syncCardVisibility();
+      drawWires();
+    }
+
+    function drawWires() {
+      const svg = document.getElementById("wires");
+      const board = document.getElementById("board");
+      const br = board.getBoundingClientRect();
+      svg.setAttribute("viewBox", "0 0 " + br.width + " " + br.height);
+      svg.replaceChildren();
+      nodes.forEach((n) => {
+        if (n.level === 0) return;
+        const rivet = rivetEl(n);
+        const card = cardEl(n.id);
+        if (!rivet || !card || card.hidden) return;
+        const fromCol = rivet.closest(".col-body");
+        const toCol = card.closest(".col-body");
+        if (!fromCol || !toCol) return;
+        if (!inClip(rivet, fromCol) || !inClip(card, toCol)) return;
+        const a = rivet.getBoundingClientRect();
+        const b = card.getBoundingClientRect();
+        const x1 = a.right - br.left;
+        const y1 = a.top + a.height / 2 - br.top;
+        const x2 = b.left - br.left;
+        const y2 = b.top + 16 - br.top;
+        const dx = Math.max(24, Math.min(72, (x2 - x1) / 2));
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute(
+          "d",
+          "M " + x1 + " " + y1 + " C " + (x1 + dx) + " " + y1 + ", " + (x2 - dx) + " " + y2 + ", " + x2 + " " + y2
+        );
+        if (n.id === hotId) path.classList.add("hot");
+        svg.appendChild(path);
+      });
+    }
+
+    function setHot(id) {
+      document.querySelectorAll("mark.rivet.hot, .card.hot").forEach((el) => el.classList.remove("hot"));
+      hotId = id;
+      if (!id) {
+        drawWires();
+        return;
+      }
+      const node = nodes.find((n) => n.id === id);
+      const card = cardEl(id);
+      if (card) card.classList.add("hot");
+      const rivet = node && rivetEl(node);
+      if (rivet) rivet.classList.add("hot");
+      drawWires();
+    }
+
+    function refreshChrome() {
+      clampView();
+      ensureWeights();
+      const crumbs = document.getElementById("crumbs");
+      const hi = Math.max(maxLevel(), cap - 1);
+      if (shellView === "tree") {
+        crumbs.textContent = "树 · 正文里的铆点；点一项回到列并打开这条路径";
+      } else if (shellView === "grid") {
+        crumbs.textContent = "网格 · 按深度分列；点一张回到列";
+      } else if (shellView === "graph") {
+        crumbs.textContent = "地图 · 等大色块，空格是正文里的距离。悬停看出是哪篇，不跳转";
+      } else {
+        crumbs.innerHTML = Array.from({ length: cap }, (_, i) => {
+          const lv = viewStart + i;
+          const n = lv === 0 ? 1 : atLevel(lv).length;
+          const label = lv === 0 ? "宿主" : n ? "侧边 " + n + " 篇" : "空";
+          return '<span class="on">' + label + "</span>";
+        }).join("  ·  ");
+      }
+      document.getElementById("panLeft").disabled = viewStart <= 0;
+      document.getElementById("panRight").disabled = viewStart + cap - 1 >= hi;
+      applyPinH();
+    }
+
+    function ensureWeights() {
+      while (colWeights.length < cap) colWeights.push(1);
+      if (colWeights.length > cap) colWeights.length = cap;
+    }
+
+    function applyPinH() {
+      document.getElementById("pinStrip").style.height = pinH + "px";
+    }
+
+    function applyColWeights() {
+      ensureWeights();
+      const cols = document.querySelectorAll("#stage > .col");
+      cols.forEach((c, i) => {
+        c.style.flex = (colWeights[i] || 1) + " 1 0";
+      });
+    }
+
+    function updateEmpty(lv) {
+      const body = levelCols[lv] && levelCols[lv].querySelector(".col-body");
+      if (!body || lv === 0) return;
+      let empty = body.querySelector(".empty");
+      const any = body.querySelector(".card");
+      if (!any) {
+        if (!empty) {
+          empty = document.createElement("div");
+          empty.className = "empty";
+          body.appendChild(empty);
+        }
+        empty.textContent = "从左边划词打开的侧边，会出现在这一列。";
+        empty.hidden = false;
+      } else if (empty) empty.hidden = true;
+    }
+
+    function sortCards(lv) {
+      const body = levelCols[lv].querySelector(".col-body");
+      const cards = [...body.querySelectorAll(".card")];
+      cards.sort((a, b) => {
+        const na = nodes.find((n) => n.id === a.dataset.node);
+        const nb = nodes.find((n) => n.id === b.dataset.node);
+        const ra = na && rivetEl(na);
+        const rb = nb && rivetEl(nb);
+        const ta = ra ? ra.getBoundingClientRect().top : 0;
+        const tb = rb ? rb.getBoundingClientRect().top : 0;
+        return ta - tb;
+      });
+      cards.forEach((c) => body.appendChild(c));
+    }
+
+    function alignCard(node) {
+      const rivet = rivetEl(node);
+      const card = cardEl(node.id);
+      if (!rivet || !card) return;
+      const col = card.closest(".col-body");
+      col.scrollTop += rivet.getBoundingClientRect().top - card.getBoundingClientRect().top;
+    }
+
+    function makeCard(node) {
+      const parent = nodes.find((n) => n.id === node.parent);
+      const card = document.createElement("article");
+      card.className = "card";
+      card.dataset.node = node.id;
+      card.dataset.via = node.via;
+      card.innerHTML =
+        '<div class="card-hd"><div><strong></strong>' +
+        (parent ? '<div class="from">← ' + displayTitle(parent.doc) + "</div>" : "") +
+        '</div><button type="button" class="close-btn" data-close="' +
+        node.id +
+        '">合上</button></div><div class="card-body"></div>';
+      card.querySelector("strong").textContent = displayTitle(node.doc);
+      const cb = card.querySelector(".card-body");
+      cb.innerHTML = docs[node.doc].html;
+      bindRivets(cb, node);
+      renderMath(card);
+      return card;
+    }
+
+    function ensureCol(lv) {
+      if (levelCols[lv]) return levelCols[lv];
+      const col = document.createElement("section");
+      col.className = "col";
+      col.dataset.level = String(lv);
+      col.innerHTML = '<div class="col-body"></div>';
+      const body = col.querySelector(".col-body");
+      body.addEventListener("scroll", onLayout);
+      if (lv === 0) {
+        const host = nodes[0];
+        body.dataset.node = host.id;
+        body.innerHTML = docs.host.html;
+        bindRivets(body, host);
+        renderMath(col);
+      } else {
+        body.classList.add("stack");
+        atLevel(lv).forEach((n) => body.appendChild(makeCard(n)));
+        updateEmpty(lv);
+      }
+      levelCols[lv] = col;
+      return col;
+    }
+
+    function makeVSplit(index) {
+      const el = document.createElement("div");
+      el.className = "v-split";
+      el.setAttribute("role", "separator");
+      el.setAttribute("aria-orientation", "vertical");
+      el.addEventListener("pointerdown", (e) => startVDrag(e, index, el));
+      el.addEventListener("dblclick", () => {
+        const sum = (colWeights[index] || 1) + (colWeights[index + 1] || 1);
+        colWeights[index] = sum / 2;
+        colWeights[index + 1] = sum / 2;
+        applyColWeights();
+        onLayout();
+      });
+      return el;
+    }
+
+    function startVDrag(e, index, handle) {
+      e.preventDefault();
+      handle.classList.add("dragging");
+      const cols = document.querySelectorAll("#stage > .col");
+      const a = cols[index];
+      const b = cols[index + 1];
+      if (!a || !b) return;
+      const wa = a.getBoundingClientRect().width;
+      const wb = b.getBoundingClientRect().width;
+      const startX = e.clientX;
+      const sum = (colWeights[index] || 1) + (colWeights[index + 1] || 1);
+      const min = 128;
+      function move(ev) {
+        let na = wa + (ev.clientX - startX);
+        let nb = wb - (ev.clientX - startX);
+        if (na < min) {
+          nb -= min - na;
+          na = min;
+        }
+        if (nb < min) {
+          na -= min - nb;
+          nb = min;
+        }
+        const t = na + nb;
+        if (t <= 0) return;
+        colWeights[index] = (sum * na) / t;
+        colWeights[index + 1] = (sum * nb) / t;
+        applyColWeights();
+        onLayout();
+      }
+      function up() {
+        handle.classList.remove("dragging");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      }
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    }
+
+    function startHDrag(e) {
+      e.preventDefault();
+      const handle = document.getElementById("hSplit");
+      handle.classList.add("dragging");
+      const startY = e.clientY;
+      const startH = pinH;
+      function move(ev) {
+        const box = document.querySelector(".workspace").getBoundingClientRect();
+        pinH = Math.max(64, Math.min(box.height * 0.5, startH + (ev.clientY - startY)));
+        applyPinH();
+        onLayout();
+      }
+      function up() {
+        handle.classList.remove("dragging");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      }
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    }
+
+    function syncStage() {
+      const stage = document.getElementById("stage");
+      const kids = [];
+      for (let i = 0; i < cap; i++) {
+        if (i) kids.push(makeVSplit(i - 1));
+        kids.push(ensureCol(viewStart + i));
+      }
+      stage.replaceChildren.apply(stage, kids);
+      applyColWeights();
+      for (let i = 0; i < cap; i++) {
+        const lv = viewStart + i;
+        if (lv > 0) {
+          sortCards(lv);
+          updateEmpty(lv);
+        }
+      }
+    }
+
+    function render() {
+      refreshChrome();
+      if (shellView === "tree") {
+        renderTree();
+        return;
+      }
+      if (shellView === "grid") {
+        renderGrid();
+        return;
+      }
+      if (shellView === "graph") {
+        renderGraph();
+        return;
+      }
+      syncStage();
+      renderPins();
+      requestAnimationFrame(onLayout);
+    }
+
+    function openFrom(fromNodeId, toId) {
+      const parent = nodes.find((n) => n.id === fromNodeId);
+      if (!parent) return;
+      const existing = nodes.find((n) => n.parent === fromNodeId && n.via === toId);
+      if (existing) {
+        ensureLevel(existing.level);
+        refreshChrome();
+        syncStage();
+        requestAnimationFrame(() => {
+          onLayout();
+          alignCard(existing);
+          setHot(existing.id);
+        });
+        return;
+      }
+      const node = {
+        id: "p" + pid++,
+        doc: toId,
+        parent: fromNodeId,
+        via: toId,
+        level: parent.level + 1
+      };
+      nodes.push(node);
+      setRivetOpen(fromNodeId, toId, true);
+      ensureLevel(node.level);
+      if (parent.level < viewStart) viewStart = parent.level;
+      clampView();
+      refreshChrome();
+      syncStage();
+      const col = ensureCol(node.level);
+      const body = col.querySelector(".col-body");
+      if (!body.querySelector('.card[data-node="' + node.id + '"]')) {
+        body.appendChild(makeCard(node));
+      }
+      sortCards(node.level);
+      updateEmpty(node.level);
+      requestAnimationFrame(() => {
+        onLayout();
+        alignCard(node);
+        setHot(node.id);
+      });
+    }
+
+    function closeNode(id) {
+      if (id === "p0") return;
+      const drop = [id].concat(descendants(id));
+      drop.forEach((did) => {
+        const n = nodes.find((x) => x.id === did);
+        if (!n) return;
+        setRivetOpen(n.parent, n.via, false);
+        const card = cardEl(did);
+        if (card) card.remove();
+      });
+      const levels = new Set(drop.map((did) => (nodes.find((x) => x.id === did) || {}).level));
+      nodes = nodes.filter((n) => drop.indexOf(n.id) < 0);
+      levels.forEach((lv) => {
+        if (lv) {
+          ensureCol(lv);
+          updateEmpty(lv);
+        }
+      });
+      if (hotId && drop.indexOf(hotId) >= 0) hotId = null;
+      refreshChrome();
+      requestAnimationFrame(onLayout);
+    }
+
+    function onNoteClick(e) {
+      const unpin = e.target.closest("[data-unpin]");
+      if (unpin) {
+        pins = pins.filter((p) => p.id !== unpin.dataset.unpin);
+        renderPins();
+        return;
+      }
+      const rivet = e.target.closest("mark.rivet");
+      if (rivet) {
+        const holder = rivet.closest("[data-node]");
+        openFrom(holder.dataset.node, rivet.dataset.to);
+        return;
+      }
+      const closeBtn = e.target.closest(".close-btn");
+      if (closeBtn) closeNode(closeBtn.dataset.close);
+    }
+
+    document.getElementById("board").addEventListener("click", onNoteClick);
+    document.getElementById("pinStrip").addEventListener("click", onNoteClick);
+    document.querySelector(".view-switch").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-view]");
+      if (b && b.dataset.view !== shellView) setShell(b.dataset.view);
+    });
+    document.getElementById("treePane").addEventListener("click", (e) => {
+      const row = e.target.closest("[data-doc]");
+      if (row) openDocPath(row.dataset.doc);
+    });
+    document.getElementById("gridPane").addEventListener("click", (e) => {
+      const card = e.target.closest("[data-doc]");
+      if (card) openDocPath(card.dataset.doc);
+    });
+    document.getElementById("graphPane").addEventListener("pointerover", (e) => {
+      const n = e.target.closest("[data-label]");
+      const pane = document.getElementById("graphPane");
+      pane.querySelectorAll(".mm-cell.hot").forEach((el) => el.classList.remove("hot"));
+      const tip = document.getElementById("mmTip");
+      if (!n) {
+        tip.classList.remove("show");
+        return;
+      }
+      if (n.classList.contains("mm-cell")) n.classList.add("hot");
+      tip.textContent = n.dataset.label;
+      tip.classList.add("show");
+      const box = n.getBoundingClientRect();
+      tip.style.left = Math.min(box.right + 8, window.innerWidth - 180) + "px";
+      tip.style.top = Math.max(8, box.top - 4) + "px";
+    });
+    document.getElementById("graphPane").addEventListener("pointerleave", () => {
+      document.getElementById("graphPane").querySelectorAll(".mm-cell.hot").forEach((el) => {
+        el.classList.remove("hot");
+      });
+      document.getElementById("mmTip").classList.remove("show");
+    });
+    document.getElementById("hSplit").addEventListener("pointerdown", startHDrag);
+    document.getElementById("hSplit").addEventListener("dblclick", () => {
+      pinH = 124;
+      applyPinH();
+      onLayout();
+    });
+
+    document.getElementById("board").addEventListener("pointerover", (e) => {
+      const card = e.target.closest(".card");
+      if (card) {
+        setHot(card.dataset.node);
+        return;
+      }
+      const rivet = e.target.closest("mark.rivet");
+      if (rivet) {
+        const holder = rivet.closest("[data-node]");
+        const child = nodes.find(
+          (n) => n.parent === holder.dataset.node && n.via === rivet.dataset.to
+        );
+        setHot(child ? child.id : null);
+      }
+    });
+    document.getElementById("board").addEventListener("pointerleave", () => setHot(null));
+    window.addEventListener("resize", () => {
+      const box = document.querySelector(".workspace").getBoundingClientRect();
+      pinH = Math.max(64, Math.min(box.height * 0.5, pinH));
+      applyPinH();
+      if (shellView === "graph") renderGraph();
+      else onLayout();
+    });
+
+    document.getElementById("panLeft").addEventListener("click", () => {
+      viewStart -= 1;
+      render();
+    });
+    document.getElementById("panRight").addEventListener("click", () => {
+      viewStart += 1;
+      render();
+    });
+
+    document.getElementById("pinSel").addEventListener("click", () => {
+      const capSel = captureSelection();
+      if (!capSel) {
+        toast("先在笔记里划一段");
+        return;
+      }
+      addPin(capSel.sourceNodeId, capSel.html);
+    });
+
+    document.getElementById("colCap").addEventListener("change", (e) => {
+      cap = Number(e.target.value);
+      ensureWeights();
+      render();
+    });
+    document.getElementById("resetPath").addEventListener("click", () => {
+      pid = 1;
+      pinSeq = 1;
+      pins = [];
+      nodes = [{ id: "p0", doc: "host", parent: null, via: null, level: 0 }];
+      viewStart = 0;
+      hotId = null;
+      Object.keys(levelCols).forEach((key) => {
+        const lv = Number(key);
+        if (lv === 0) {
+          levelCols[0]
+            .querySelectorAll("mark.rivet")
+            .forEach((m) => m.classList.remove("open", "hot"));
+        } else {
+          levelCols[lv].querySelectorAll(".card").forEach((c) => c.remove());
+          updateEmpty(lv);
+        }
+      });
+      render();
+    });
+
+    document.addEventListener("contextmenu", (e) => {
+      const rivet = e.target.closest("mark.rivet");
+      if (!rivet) {
+        menu.style.display = "none";
+        menuRivet = null;
+        return;
+      }
+      e.preventDefault();
+      menuRivet = rivet;
+      menu.style.display = "block";
+      menu.style.left = e.clientX + "px";
+      menu.style.top = e.clientY + "px";
+    });
+    document.addEventListener("click", () => { menu.style.display = "none"; });
+    menu.addEventListener("click", (e) => {
+      const act = e.target.dataset.act;
+      if (!act) return;
+      if (act === "pin") {
+        const rivet = menuRivet;
+        const holder = rivet && rivet.closest("[data-node]");
+        if (holder && rivet) addPin(holder.dataset.node, nodeToSourceHtml(rivet));
+        return;
+      }
+      const labels = { new: "新建侧边（演示，未写入）", reuse: "复用已有笔记（演示）", excerpt: "节选一段（演示，指向而非复制）" };
+      toast(labels[act]);
+    });
+
+    document.addEventListener("DOMContentLoaded", render);
+  </script>
+</body>
+</html>

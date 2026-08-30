@@ -1,0 +1,11 @@
+{
+  "name": "intro",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "mockup": "tsc -p mockup/tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
