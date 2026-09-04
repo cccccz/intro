@@ -1,3 +1,5 @@
+import { highlightHtml } from "./highlight.ts";
+
 type Damage = { kind: string; message: string; index: number; id?: string };
 type RivetSpec = { id: string; to?: string | null; start: number; end: number };
 
@@ -94,11 +96,15 @@ const el = {
   newPiece: document.getElementById("btn-new-piece") as HTMLButtonElement,
   list: document.getElementById("piece-list") as HTMLUListElement,
   sidebarEmpty: document.getElementById("sidebar-empty") as HTMLElement,
+  board: document.getElementById("board") as HTMLElement,
   columns: document.getElementById("columns") as HTMLElement,
+  wires: document.querySelector("#wires") as SVGSVGElement,
   status: document.getElementById("status") as HTMLElement,
 };
 
 const persistTimers = new Map<string, number>();
+let hotId: string | null = null;
+let wireFrame = 0;
 
 function setStatus(text: string, danger = false): void {
   el.status.textContent = text;
@@ -111,6 +117,119 @@ function quoteOf(clean: string, start: number, end: number): string {
     return slice || "(empty)";
   }
   return `${slice.slice(0, 24)}…`;
+}
+
+function openRivetAt(hostIndex: number): string | null {
+  return state.columns[hostIndex + 1]?.viaRivetId ?? null;
+}
+
+function inClip(node: Element, clip: Element): boolean {
+  const a = node.getBoundingClientRect();
+  const b = clip.getBoundingClientRect();
+  return (
+    a.bottom > b.top + 2 &&
+    a.top < b.bottom - 2 &&
+    a.right > b.left + 2 &&
+    a.left < b.right - 2
+  );
+}
+
+function paintHighlights(
+  highlights: HTMLElement,
+  clean: string,
+  rivets: readonly RivetSpec[],
+  openId: string | null,
+): void {
+  highlights.innerHTML = highlightHtml(clean, rivets, openId);
+}
+
+function syncHighlightScroll(editor: HTMLTextAreaElement, highlights: HTMLElement): void {
+  highlights.scrollTop = editor.scrollTop;
+  highlights.scrollLeft = editor.scrollLeft;
+}
+
+function paintColumn(column: HTMLElement): void {
+  const index = Number(column.dataset.depth);
+  const pieceId = column.dataset.pieceId;
+  if (!pieceId) {
+    return;
+  }
+  const view = state.views[pieceId];
+  const editor = column.querySelector("textarea.editor") as HTMLTextAreaElement | null;
+  const highlights = column.querySelector(".editor-highlights") as HTMLElement | null;
+  if (!editor || !highlights) {
+    return;
+  }
+  paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetAt(index));
+  syncHighlightScroll(editor, highlights);
+}
+
+function scheduleWires(): void {
+  if (wireFrame) {
+    return;
+  }
+  wireFrame = requestAnimationFrame(() => {
+    wireFrame = 0;
+    drawWires();
+  });
+}
+
+function setHot(id: string | null): void {
+  hotId = id;
+  el.columns.querySelectorAll("mark.hot, .rivet.hot").forEach((node) => {
+    node.classList.remove("hot");
+  });
+  if (id) {
+    el.columns.querySelectorAll(`mark[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
+      node.classList.add("hot");
+    });
+    el.columns.querySelectorAll(`.rivet[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
+      node.classList.add("hot");
+    });
+  }
+  drawWires();
+}
+
+function drawWires(): void {
+  const svg = el.wires;
+  const board = el.board;
+  const br = board.getBoundingClientRect();
+  svg.setAttribute("viewBox", `0 0 ${Math.max(0, br.width)} ${Math.max(0, br.height)}`);
+  svg.replaceChildren();
+  const columns = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
+  for (let i = 1; i < state.columns.length; i++) {
+    const via = state.columns[i]?.viaRivetId;
+    const host = columns[i - 1];
+    const side = columns[i];
+    if (!via || !host || !side) {
+      continue;
+    }
+    const mark = host.querySelector(`mark[data-rivet="${CSS.escape(via)}"]`) as HTMLElement | null;
+    if (!mark) {
+      continue;
+    }
+    const clip = host.querySelector(".editor-stack") ?? host;
+    if (!inClip(mark, clip) || !inClip(side, board)) {
+      continue;
+    }
+    const a = mark.getBoundingClientRect();
+    const b = side.getBoundingClientRect();
+    const x1 = a.right - br.left;
+    const y1 = a.top + a.height / 2 - br.top;
+    const x2 = b.left - br.left;
+    const y2 = b.top + 18 - br.top;
+    const dx = Math.max(24, Math.min(72, (x2 - x1) / 2));
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute(
+      "d",
+      `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
+    );
+    path.dataset.rivet = via;
+    if (via === hotId) {
+      path.classList.add("hot");
+    }
+    svg.appendChild(path);
+  }
 }
 
 function applyLibrary(library: LibraryDto): void {
@@ -153,11 +272,13 @@ function renderColumns(): void {
       ? "Open a piece from the left, or create the first one."
       : "Open a local library folder to write.";
     el.columns.append(hint);
+    drawWires();
     return;
   }
   state.columns.forEach((col, index) => {
     el.columns.append(renderColumn(col, index));
   });
+  scheduleWires();
 }
 
 function renderColumn(col: Column, index: number): HTMLElement {
@@ -191,6 +312,11 @@ function renderColumn(col: Column, index: number): HTMLElement {
   });
   head.append(depth, id, close);
 
+  const stack = document.createElement("div");
+  stack.className = "editor-stack";
+  const highlights = document.createElement("div");
+  highlights.className = "editor-highlights";
+  highlights.setAttribute("aria-hidden", "true");
   const editor = document.createElement("textarea");
   editor.className = "editor";
   editor.spellcheck = false;
@@ -199,9 +325,24 @@ function renderColumn(col: Column, index: number): HTMLElement {
   if (view && view.damage.length > 0) {
     editor.readOnly = true;
   }
+  paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetAt(index));
   editor.addEventListener("input", () => {
+    paintHighlights(
+      highlights,
+      editor.value,
+      state.views[col.pieceId]?.rivets ?? [],
+      openRivetAt(index),
+    );
+    syncHighlightScroll(editor, highlights);
     schedulePersist(col.pieceId, editor);
+    scheduleWires();
   });
+  editor.addEventListener("scroll", () => {
+    syncHighlightScroll(editor, highlights);
+    scheduleWires();
+  });
+
+  stack.append(highlights, editor);
 
   const tools = document.createElement("div");
   tools.className = "column-tools";
@@ -235,11 +376,14 @@ function renderColumn(col: Column, index: number): HTMLElement {
     ? `Damaged (${view.damage.map((d) => d.kind).join(", ")})`
     : `Rivets (${view?.rivets.length ?? 0})`;
   rivets.append(h);
+  const openId = openRivetAt(index);
   if (view) {
     for (const rivet of view.rivets) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "rivet";
+      btn.dataset.rivet = rivet.id;
+      btn.classList.toggle("open", rivet.id === openId);
       const quote = document.createElement("span");
       quote.className = "quote";
       quote.textContent = `「${quoteOf(view.clean, rivet.start, rivet.end)}」`;
@@ -248,6 +392,12 @@ function renderColumn(col: Column, index: number): HTMLElement {
       to.textContent = rivet.to ? `→ ${rivet.to}` : "(no side)";
       btn.append(quote, to);
       btn.disabled = !rivet.to;
+      btn.addEventListener("pointerenter", () => {
+        setHot(rivet.id);
+      });
+      btn.addEventListener("pointerleave", () => {
+        setHot(null);
+      });
       btn.addEventListener("click", () => {
         if (rivet.to) {
           void openSideColumn(index, rivet.to, rivet.id);
@@ -257,7 +407,7 @@ function renderColumn(col: Column, index: number): HTMLElement {
     }
   }
 
-  section.append(head, editor, tools, rivets);
+  section.append(head, stack, tools, rivets);
   return section;
 }
 
@@ -282,6 +432,13 @@ async function persistNow(id: string, clean: string): Promise<void> {
     return;
   }
   state.views[id] = result.piece;
+  const column = el.columns.querySelector(
+    `.column[data-piece-id="${CSS.escape(id)}"]`,
+  ) as HTMLElement | null;
+  if (column) {
+    paintColumn(column);
+  }
+  scheduleWires();
   setStatus(`Saved ${id}`);
 }
 
@@ -398,6 +555,10 @@ window.intro.onLibraryOpened((library) => {
   renderColumns();
   setStatus(`Library ${library.root}`);
 });
+
+el.columns.addEventListener("scroll", scheduleWires);
+window.addEventListener("resize", scheduleWires);
+new ResizeObserver(scheduleWires).observe(el.board);
 
 renderSidebar();
 renderColumns();

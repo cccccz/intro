@@ -11,8 +11,8 @@
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "verbatimModuleSyntax": true,
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": []
   },
-  "include": ["./renderer.ts"]
+  "include": ["./renderer.ts", "./highlight.ts"]
 }

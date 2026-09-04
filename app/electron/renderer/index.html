@@ -20,7 +20,10 @@
       <ul id="piece-list"></ul>
       <p id="sidebar-empty" class="muted">Open a folder to start. An empty folder is a new library.</p>
     </aside>
-    <main id="columns"></main>
+    <div id="board">
+      <main id="columns"></main>
+      <svg class="wires" id="wires" aria-hidden="true"></svg>
+    </div>
   </div>
   <footer id="status" class="muted">Open a library, create a first piece, write text, select a span, hang a side.</footer>
   <script type="module" src="./renderer.js"></script>

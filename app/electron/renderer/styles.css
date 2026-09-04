@@ -6,6 +6,8 @@
   --line: #e4e4e7;
   --accent: #2563eb;
   --mark: #dbeafe;
+  --mark-open: #bfdbfe;
+  --wire: #93c5fd;
   --danger: #b91c1c;
 }
 
@@ -108,12 +110,43 @@ button:disabled { opacity: 0.4; cursor: default; }
   color: var(--accent);
 }
 
+#board {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+
 #columns {
   flex: 1;
   min-width: 0;
   display: flex;
   overflow-x: auto;
   background: var(--bg);
+}
+
+.wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 4;
+}
+
+.wires path {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 1.4;
+  opacity: 0.55;
+}
+
+.wires path.hot {
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 1;
 }
 
 .column {
@@ -148,16 +181,61 @@ button:disabled { opacity: 0.4; cursor: default; }
   font-size: 12px;
 }
 
-.editor {
+.editor-stack {
+  position: relative;
   flex: 1;
   min-height: 160px;
+}
+
+.editor-highlights,
+.editor {
+  position: absolute;
+  inset: 0;
   width: 100%;
+  height: 100%;
+  margin: 0;
   border: 0;
   padding: 12px;
-  resize: none;
   font: 15px/1.5 ui-serif, "Iwanami Mincho", "Source Serif 4", "Songti SC", serif;
-  color: var(--ink);
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  tab-size: 4;
+  scrollbar-gutter: stable;
+}
+
+.editor-highlights {
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
   background: var(--paper);
+}
+
+.editor-highlights mark {
+  color: transparent;
+  background: var(--mark);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.editor-highlights mark.open {
+  background: var(--mark-open);
+}
+
+.editor-highlights mark.hot {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.editor {
+  overflow: auto;
+  resize: none;
+  color: var(--ink);
+  caret-color: var(--ink);
+  background: transparent;
+  z-index: 1;
 }
 
 .editor:focus { outline: none; box-shadow: inset 0 0 0 2px #bfdbfe; }
@@ -193,6 +271,9 @@ button:disabled { opacity: 0.4; cursor: default; }
   text-align: left;
   background: var(--mark);
 }
+
+.rivet.open { background: var(--mark-open); }
+.rivet.hot { outline: 1.5px solid var(--accent); }
 
 .rivet .quote {
   flex: 1;

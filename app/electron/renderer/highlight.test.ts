@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { highlightHtml } from "./highlight.ts";
+
+describe("highlightHtml", () => {
+  it("escapes text when there are no rivets", () => {
+    assert.equal(highlightHtml("a <b>", [], null), "a &lt;b&gt;\n");
+  });
+
+  it("wraps one span and marks the open rivet", () => {
+    const html = highlightHtml("hello world", [{ id: "r1", start: 0, end: 5 }], "r1");
+    assert.equal(html, '<mark data-rivet="r1" class="open">hello</mark> world\n');
+  });
+
+  it("nests marks when ranges nest", () => {
+    const html = highlightHtml("hello world", [
+      { id: "outer", start: 0, end: 11 },
+      { id: "inner", start: 6, end: 11 },
+    ], null);
+    assert.equal(
+      html,
+      '<mark data-rivet="outer">hello <mark data-rivet="inner">world</mark></mark>\n',
+    );
+  });
+
+  it("places adjacent marks without overlap", () => {
+    const html = highlightHtml("abcdef", [
+      { id: "a", start: 0, end: 3 },
+      { id: "b", start: 3, end: 6 },
+    ], null);
+    assert.equal(
+      html,
+      '<mark data-rivet="a">abc</mark><mark data-rivet="b">def</mark>\n',
+    );
+  });
+
+  it("skips ranges that no longer fit the clean text", () => {
+    assert.equal(
+      highlightHtml("ab", [{ id: "gone", start: 0, end: 5 }], null),
+      "ab\n",
+    );
+  });
+});
