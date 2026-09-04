@@ -5,9 +5,8 @@
   --muted: #71717a;
   --line: #e4e4e7;
   --accent: #2563eb;
-  --mark: #dbeafe;
-  --mark-open: #bfdbfe;
-  --wire: #93c5fd;
+  --mark: #bfdbfe;
+  --mark-open: #93c5fd;
   --danger: #b91c1c;
 }
 
@@ -138,14 +137,14 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 .wires path {
   fill: none;
-  stroke: var(--wire);
-  stroke-width: 1.4;
-  opacity: 0.55;
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 0.75;
 }
 
 .wires path.hot {
-  stroke: var(--accent);
-  stroke-width: 2;
+  stroke: #1d4ed8;
+  stroke-width: 2.5;
   opacity: 1;
 }
 
