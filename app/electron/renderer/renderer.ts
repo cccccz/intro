@@ -139,7 +139,10 @@ type State = {
   pieces: { id: string; path: string }[];
   nodes: OpenNode[];
   views: Record<string, PieceDto>;
-  /** Per open card. Source is the write surface; rendered is read-only. */
+  /**
+   * Per open card. Source edits the piece (marks SoT in `.intro.md`);
+   * rendered is a read-only projection. Highlight/wires are view-layer.
+   */
   modes: Record<string, BodyMode>;
 };
 
@@ -253,8 +256,13 @@ function paintSurface(surface: HTMLElement): void {
 
 function applyMode(surface: HTMLElement, mode: BodyMode): void {
   const nodeId = surface.dataset.nodeId;
+  const pieceId = surface.dataset.pieceId;
+  const editor = surface.querySelector("textarea.editor") as HTMLTextAreaElement | null;
   if (nodeId) {
     state.modes[nodeId] = mode;
+  }
+  if (mode === "rendered" && pieceId && editor) {
+    flushPersist(pieceId, editor);
   }
   surface.dataset.mode = mode;
   const source = surface.querySelector(".body-source") as HTMLElement | null;
@@ -537,6 +545,7 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   const rendered = document.createElement("div");
   rendered.className = "body-rendered";
   rendered.hidden = true;
+  rendered.setAttribute("aria-readonly", "true");
   rendered.addEventListener("scroll", scheduleChrome);
 
   body.append(stack, rendered);
@@ -748,6 +757,17 @@ function schedulePersist(id: string, editor: HTMLTextAreaElement): void {
       void persistNow(id, editor.value);
     }, 350),
   );
+}
+
+/** Flush a pending source edit to `.intro.md` (marks stay SoT). Never persist rendered HTML. */
+function flushPersist(id: string, editor: HTMLTextAreaElement): void {
+  const prev = persistTimers.get(id);
+  if (prev === undefined) {
+    return;
+  }
+  window.clearTimeout(prev);
+  persistTimers.delete(id);
+  void persistNow(id, editor.value);
 }
 
 async function persistNow(id: string, clean: string): Promise<void> {

@@ -82,6 +82,17 @@ describe("M1 write loop on disk", () => {
     assert.equal(lib.list().length, 2);
   });
 
+  it("persistClean writes rivet mark syntax, not highlight HTML", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "host01", body: "hello" });
+    hangSide(lib, "host01", { start: 0, end: 5 });
+    persistClean(lib, "host01", "hello");
+    const body = lib.load("host01").body;
+    assert.match(body, /<<r id="/);
+    assert.doesNotMatch(body, /<mark/);
+    assert.doesNotMatch(body, /data-rivet/);
+  });
+
   it("keeps fitting rivets when clean text is only appended", () => {
     const lib = tmpLibrary();
     lib.createPiece({ id: "host01", body: "hello" });

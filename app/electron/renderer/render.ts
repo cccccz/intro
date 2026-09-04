@@ -72,8 +72,9 @@ export function markupInline(text: string, math: MathRenderer = fallbackMath): s
 }
 
 /**
- * Rendered body of the same clean text the source textarea edits.
- * Rivet marks stay so wires / viewport hide still read `rivetId → rects`.
+ * Read-only projection of one piece. Input is clean text (strip of `.intro.md`).
+ * `[data-rivet]` here is view-layer geometry, not SoT — do not persist this HTML.
+ * Authority stays 做法 A: rivet marks in the source body file.
  */
 export function renderHtml(
   clean: string,

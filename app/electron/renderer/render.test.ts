@@ -58,4 +58,10 @@ describe("renderHtml", () => {
       'phi <mark data-rivet="r1"><span class="tex">x</span></mark> end',
     );
   });
+
+  it("is a projection: highlight markup is not a persist format", () => {
+    const html = renderHtml("hello", [{ id: "r1", start: 0, end: 5 }]);
+    assert.match(html, /<mark data-rivet="r1">/);
+    assert.doesNotMatch(html, /<<r /);
+  });
 });
