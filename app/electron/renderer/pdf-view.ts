@@ -1,5 +1,15 @@
 /** Shapes match `app/pdf/overlay.ts`. Duplicated: renderer build cannot import that tree. */
 
+import {
+  PDF_OVERSCAN_PAGES,
+  PDF_RESIZE_DEBOUNCE_MS,
+  expandPageWindow,
+  pageInRange,
+  rasterWindowFromScroll,
+  samePageRange,
+  type PageRange,
+} from "./pdf-window.ts";
+
 export type PdfUserRect = {
   x: number;
   y: number;
@@ -31,7 +41,7 @@ type PdfPage = {
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
     viewport: PdfViewport;
-  }) => { promise: Promise<void> };
+  }) => { promise: Promise<void>; cancel: () => void };
 };
 
 type PdfDocument = {
@@ -164,6 +174,23 @@ function paintOverlays(
   }
 }
 
+function isRenderCancel(err: unknown): boolean {
+  if (!err || typeof err !== "object" || !("name" in err)) {
+    return false;
+  }
+  const name = String((err as { name: unknown }).name);
+  return name === "RenderingCancelledException" || name === "AbortException";
+}
+
+type PageSlot = {
+  el: HTMLElement;
+  viewport: PdfViewport;
+  page: number;
+  canvas: HTMLCanvasElement | null;
+  renderGen: number;
+  renderTask: { cancel: () => void; promise: Promise<void> } | null;
+};
+
 function clientToPdfRect(
   pageEl: HTMLElement,
   viewport: PdfViewport,
@@ -209,7 +236,13 @@ export async function mountPdfView(opts: {
   let openIds = opts.openIds;
   let selection: PdfSelection | null = null;
   let dead = false;
-  const pages: { el: HTMLElement; viewport: PdfViewport; page: number }[] = [];
+  const pages: PageSlot[] = [];
+  const intersecting = new Set<number>();
+  let applied: PageRange = { from: 1, to: 0 };
+  let applyGen = 0;
+  let layoutGen = 0;
+  let syncRaf = 0;
+  let resizeTimer = 0;
 
   const scaleFor = async (pageNo: number): Promise<number> => {
     const page = await doc.getPage(pageNo);
@@ -218,115 +251,301 @@ export async function mountPdfView(opts: {
     return width / base.width;
   };
 
-  const renderPages = async (): Promise<void> => {
-    if (dead) {
-      return;
-    }
-    const scale = await scaleFor(1);
-    root.replaceChildren();
-    pages.length = 0;
-    for (let n = 1; n <= doc.numPages; n++) {
+  const measureViewports = async (scale: number): Promise<PdfViewport[]> => {
+    const viewports: PdfViewport[] = [];
+    const chunk = 16;
+    for (let start = 1; start <= doc.numPages; start += chunk) {
       if (dead) {
-        return;
+        return viewports;
       }
-      const page = await doc.getPage(n);
-      const viewport = page.getViewport({ scale });
-      const pageEl = document.createElement("div");
-      pageEl.className = "pdf-page";
-      pageEl.dataset.page = String(n);
-      pageEl.style.width = `${viewport.width}px`;
-      pageEl.style.height = `${viewport.height}px`;
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      const overlay = document.createElement("div");
-      overlay.className = "pdf-overlay";
-      pageEl.append(canvas, overlay);
-      root.append(pageEl);
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        await page.render({ canvasContext: ctx, viewport }).promise;
+      const end = Math.min(doc.numPages, start + chunk - 1);
+      const batch = await Promise.all(
+        Array.from({ length: end - start + 1 }, (_, i) => doc.getPage(start + i)),
+      );
+      for (const page of batch) {
+        viewports.push(page.getViewport({ scale }));
       }
-      pages.push({ el: pageEl, viewport, page: n });
-      paintOverlays(pageEl, n, viewport, rivets, openIds, opts);
     }
-    bindDraw();
-    paintDraft();
-    opts.onChrome();
+    return viewports;
   };
 
   let draw: { page: number; start: { x: number; y: number } } | null = null;
 
   const paintDraft = (): void => {
-    for (const page of pages) {
-      const layer = page.el.querySelector(".pdf-overlay");
+    for (const slot of pages) {
+      const layer = slot.el.querySelector(".pdf-overlay");
       layer?.querySelectorAll(".pdf-draft").forEach((node) => node.remove());
     }
     if (!selection) {
       return;
     }
     for (const anchor of selection.anchors) {
-      const page = pages.find((p) => p.page === anchor.page);
-      if (!page) {
+      const slot = pages.find((p) => p.page === anchor.page);
+      if (!slot?.canvas) {
         continue;
       }
-      const box = pageRelativeBox(page.viewport, anchor.rect);
+      const box = pageRelativeBox(slot.viewport, anchor.rect);
       const draft = document.createElement("div");
       draft.className = "pdf-draft";
       draft.style.left = `${box.left}%`;
       draft.style.top = `${box.top}%`;
       draft.style.width = `${box.width}%`;
       draft.style.height = `${box.height}%`;
-      page.el.querySelector(".pdf-overlay")?.append(draft);
+      slot.el.querySelector(".pdf-overlay")?.append(draft);
     }
   };
 
-  const bindDraw = (): void => {
-    for (const page of pages) {
-      const overlay = page.el.querySelector(".pdf-overlay") as HTMLElement | null;
-      if (!overlay) {
+  const bindDrawPage = (slot: PageSlot): void => {
+    const overlay = slot.el.querySelector(".pdf-overlay") as HTMLElement | null;
+    if (!overlay) {
+      return;
+    }
+    overlay.onpointerdown = (ev) => {
+      if (ev.button !== 0) {
+        return;
+      }
+      const target = ev.target as HTMLElement;
+      if (target.closest(".pdf-hl")) {
+        return;
+      }
+      draw = { page: slot.page, start: { x: ev.clientX, y: ev.clientY } };
+      overlay.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    };
+    overlay.onpointermove = (ev) => {
+      if (!draw || draw.page !== slot.page) {
+        return;
+      }
+      const rect = clientToPdfRect(slot.el, slot.viewport, draw.start, {
+        x: ev.clientX,
+        y: ev.clientY,
+      });
+      selection = rect ? { anchors: [{ page: slot.page, rect }] } : null;
+      paintDraft();
+    };
+    overlay.onpointerup = (ev) => {
+      if (!draw || draw.page !== slot.page) {
+        return;
+      }
+      const rect = clientToPdfRect(slot.el, slot.viewport, draw.start, {
+        x: ev.clientX,
+        y: ev.clientY,
+      });
+      selection = rect ? { anchors: [{ page: slot.page, rect }] } : null;
+      draw = null;
+      paintDraft();
+      opts.onChrome();
+    };
+  };
+
+  const unmountCanvas = (slot: PageSlot): void => {
+    slot.renderGen += 1;
+    try {
+      slot.renderTask?.cancel();
+    } catch {
+      /* pdf.js may throw if the task already finished */
+    }
+    slot.renderTask = null;
+    slot.canvas = null;
+    slot.el.replaceChildren();
+    delete slot.el.dataset.raster;
+  };
+
+  const mountCanvas = async (slot: PageSlot): Promise<void> => {
+    if (dead || slot.canvas) {
+      return;
+    }
+    const gen = ++slot.renderGen;
+    const pdfPage = await doc.getPage(slot.page);
+    if (dead || gen !== slot.renderGen) {
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(slot.viewport.width);
+    canvas.height = Math.floor(slot.viewport.height);
+    const overlay = document.createElement("div");
+    overlay.className = "pdf-overlay";
+    slot.el.append(canvas, overlay);
+    slot.el.dataset.raster = "1";
+    slot.canvas = canvas;
+    bindDrawPage(slot);
+    paintOverlays(slot.el, slot.page, slot.viewport, rivets, openIds, opts);
+    paintDraft();
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      opts.onChrome();
+      return;
+    }
+    const task = pdfPage.render({ canvasContext: ctx, viewport: slot.viewport });
+    slot.renderTask = task;
+    try {
+      await task.promise;
+    } catch (err) {
+      if (isRenderCancel(err)) {
+        return;
+      }
+      console.warn(`pdf page ${slot.page} render failed`, err);
+    } finally {
+      if (slot.renderTask === task) {
+        slot.renderTask = null;
+      }
+    }
+    if (dead || gen !== slot.renderGen) {
+      return;
+    }
+    opts.onChrome();
+  };
+
+  const wantedRange = (): PageRange => {
+    if (intersecting.size > 0) {
+      return expandPageWindow([...intersecting], doc.numPages, PDF_OVERSCAN_PAGES);
+    }
+    return rasterWindowFromScroll(
+      pages.map((p) => p.el.offsetTop),
+      pages.map((p) => p.el.offsetHeight),
+      root.scrollTop,
+      root.clientHeight,
+      PDF_OVERSCAN_PAGES,
+    );
+  };
+
+  const applyWindow = async (range: PageRange): Promise<void> => {
+    if (dead) {
+      return;
+    }
+    const already =
+      samePageRange(range, applied) &&
+      pages.every((slot) => pageInRange(slot.page, range) === Boolean(slot.canvas));
+    if (already) {
+      return;
+    }
+    applied = range;
+    root.dataset.rasterFrom = String(range.from);
+    root.dataset.rasterTo = String(range.to);
+    const gen = ++applyGen;
+    for (const slot of pages) {
+      if (!pageInRange(slot.page, range) && slot.canvas) {
+        unmountCanvas(slot);
+      }
+    }
+    await Promise.all(
+      pages.filter((slot) => pageInRange(slot.page, range) && !slot.canvas).map((slot) => mountCanvas(slot)),
+    );
+    if (dead || gen !== applyGen) {
+      return;
+    }
+    opts.onChrome();
+  };
+
+  const syncWindow = (): void => {
+    void applyWindow(wantedRange());
+  };
+
+  const scheduleSync = (): void => {
+    if (syncRaf) {
+      return;
+    }
+    syncRaf = requestAnimationFrame(() => {
+      syncRaf = 0;
+      if (!dead) {
+        syncWindow();
+      }
+    });
+  };
+
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const n = Number((entry.target as HTMLElement).dataset.page);
+        if (!Number.isInteger(n) || n < 1) {
+          continue;
+        }
+        if (entry.isIntersecting) {
+          intersecting.add(n);
+        } else {
+          intersecting.delete(n);
+        }
+      }
+      scheduleSync();
+    },
+    { root, threshold: 0 },
+  );
+
+  const sizePage = (slot: PageSlot, viewport: PdfViewport): void => {
+    slot.viewport = viewport;
+    slot.el.style.width = `${viewport.width}px`;
+    slot.el.style.height = `${viewport.height}px`;
+  };
+
+  const appendPlaceholder = (n: number, viewport: PdfViewport): void => {
+    const pageEl = document.createElement("div");
+    pageEl.className = "pdf-page";
+    pageEl.dataset.page = String(n);
+    pageEl.style.width = `${viewport.width}px`;
+    pageEl.style.height = `${viewport.height}px`;
+    root.append(pageEl);
+    pages.push({
+      el: pageEl,
+      viewport,
+      page: n,
+      canvas: null,
+      renderGen: 0,
+      renderTask: null,
+    });
+    io.observe(pageEl);
+  };
+
+  const layoutPlaceholders = async (): Promise<void> => {
+    if (dead) {
+      return;
+    }
+    const gen = ++layoutGen;
+    const scale = await scaleFor(1);
+    if (dead || gen !== layoutGen) {
+      return;
+    }
+    if (pages.length === 0) {
+      const chunk = 16;
+      for (let start = 1; start <= doc.numPages; start += chunk) {
+        if (dead || gen !== layoutGen) {
+          return;
+        }
+        const end = Math.min(doc.numPages, start + chunk - 1);
+        const batch = await Promise.all(
+          Array.from({ length: end - start + 1 }, (_, i) => doc.getPage(start + i)),
+        );
+        if (dead || gen !== layoutGen) {
+          return;
+        }
+        for (let i = 0; i < batch.length; i++) {
+          appendPlaceholder(start + i, batch[i]!.getViewport({ scale }));
+        }
+        if (start === 1) {
+          syncWindow();
+        }
+      }
+      syncWindow();
+      return;
+    }
+    const viewports = await measureViewports(scale);
+    if (dead || gen !== layoutGen) {
+      return;
+    }
+    for (const slot of pages) {
+      const viewport = viewports[slot.page - 1];
+      if (!viewport) {
         continue;
       }
-      overlay.onpointerdown = (ev) => {
-        if (ev.button !== 0) {
-          return;
-        }
-        const target = ev.target as HTMLElement;
-        if (target.closest(".pdf-hl")) {
-          return;
-        }
-        draw = { page: page.page, start: { x: ev.clientX, y: ev.clientY } };
-        overlay.setPointerCapture(ev.pointerId);
-        ev.preventDefault();
-      };
-      overlay.onpointermove = (ev) => {
-        if (!draw || draw.page !== page.page) {
-          return;
-        }
-        const rect = clientToPdfRect(page.el, page.viewport, draw.start, {
-          x: ev.clientX,
-          y: ev.clientY,
-        });
-        selection = rect ? { anchors: [{ page: page.page, rect }] } : null;
-        paintDraft();
-      };
-      overlay.onpointerup = (ev) => {
-        if (!draw || draw.page !== page.page) {
-          return;
-        }
-        const rect = clientToPdfRect(page.el, page.viewport, draw.start, {
-          x: ev.clientX,
-          y: ev.clientY,
-        });
-        selection = rect ? { anchors: [{ page: page.page, rect }] } : null;
-        draw = null;
-        paintDraft();
-        opts.onChrome();
-      };
+      sizePage(slot, viewport);
+      if (slot.canvas) {
+        unmountCanvas(slot);
+      }
     }
+    applied = { from: 1, to: 0 };
+    syncWindow();
   };
 
-  await renderPages();
+  await layoutPlaceholders();
 
   let lastWidth = root.clientWidth;
   const ro = new ResizeObserver(() => {
@@ -335,14 +554,34 @@ export async function mountPdfView(opts: {
       return;
     }
     lastWidth = width;
-    void renderPages();
+    if (resizeTimer) {
+      window.clearTimeout(resizeTimer);
+    }
+    resizeTimer = window.setTimeout(() => {
+      resizeTimer = 0;
+      void layoutPlaceholders();
+    }, PDF_RESIZE_DEBOUNCE_MS);
   });
   ro.observe(root);
+  root.addEventListener("scroll", scheduleSync, { passive: true });
 
   return {
     destroy: () => {
       dead = true;
+      if (syncRaf) {
+        cancelAnimationFrame(syncRaf);
+        syncRaf = 0;
+      }
+      if (resizeTimer) {
+        window.clearTimeout(resizeTimer);
+        resizeTimer = 0;
+      }
+      io.disconnect();
       ro.disconnect();
+      root.removeEventListener("scroll", scheduleSync);
+      for (const slot of pages) {
+        unmountCanvas(slot);
+      }
       root.replaceChildren();
     },
     getSelection: () => selection,
@@ -353,8 +592,10 @@ export async function mountPdfView(opts: {
     setRivets: (next, nextOpen) => {
       rivets = next;
       openIds = nextOpen;
-      for (const page of pages) {
-        paintOverlays(page.el, page.page, page.viewport, rivets, openIds, opts);
+      for (const slot of pages) {
+        if (slot.canvas) {
+          paintOverlays(slot.el, slot.page, slot.viewport, rivets, openIds, opts);
+        }
       }
       paintDraft();
       opts.onChrome();

@@ -483,6 +483,10 @@ button:disabled { opacity: 0.4; cursor: default; }
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
 }
 
+.pdf-page:not([data-raster]) {
+  background: #fafafa;
+}
+
 .pdf-page canvas {
   display: block;
   width: 100%;

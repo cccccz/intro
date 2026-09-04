@@ -85,7 +85,7 @@ lib.attachPdf("/path/to/paper.pdf");
 
 `overlay` 里的矩形是 PDF 用户空间的轴对齐框。若输入是 QuadPoints（8 个数一组），按四个顶点的 min/max 归一，不假设 Acrobat 与 ISO 顶点顺序一致，也不把选区当成 PDF 文件的字符串下标。
 
-几何：PDF.js 把这些框投到页上的 `[data-rivet]`，与文本宿主共用导线/视口代码。屏幕像素不落盘。
+几何：PDF.js 把这些框投到页上的 `[data-rivet]`，与文本宿主共用导线/视口代码。屏幕像素不落盘。长文档只 raster 视口附近的页（相交页 ± 2；占位保持滚动高度）；overlay 只画在已挂上的页上，滚回再挂时仍从 sidecar 投影。
 
 已做：附入 PDF、框选区域、新建/复用侧边、overlay 高亮 + 导线、侧边再挂（文本 Source/Rendered 仍在）。
 
