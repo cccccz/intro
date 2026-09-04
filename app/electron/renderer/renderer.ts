@@ -227,6 +227,7 @@ function paintRendered(surface: HTMLElement): void {
     return;
   }
   const view = state.views[pieceId];
+  // Clean editor text + parsed rivet ranges. Markdown never sees `<<r>>`.
   pane.innerHTML = renderHtml(
     editor.value,
     view?.rivets ?? [],

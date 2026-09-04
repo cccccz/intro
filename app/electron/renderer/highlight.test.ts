@@ -55,4 +55,10 @@ describe("highlightHtml", () => {
       "ab\n",
     );
   });
+
+  it("source view does not run markdown", () => {
+    const html = highlightHtml("# **x**", [{ id: "r1", start: 2, end: 7 }]);
+    assert.equal(html, '# <mark data-rivet="r1">**x**</mark>\n');
+    assert.doesNotMatch(html, /<h1>|<strong>/);
+  });
 });

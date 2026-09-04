@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import markdownit from "markdown-it";
+import { add, flattenRivetSpecs, parse, strip } from "../../marks/index.ts";
 import {
   fallbackMath,
+  hasMarkDelimiters,
   markupMarkdown,
   renderHtml,
   sanitizeHtml,
@@ -106,5 +108,72 @@ describe("renderHtml", () => {
     const html = renderHtml("hello", [{ id: "r1", start: 0, end: 5 }]);
     assert.match(html, /<mark data-rivet="r1">/);
     assert.doesNotMatch(html, /<<r /);
+  });
+});
+
+/** Rivets first (parse/strip), then markdown on clean text. */
+function renderFromMarked(body: string, openIds: readonly string[] = []): string {
+  const parsed = parse(body);
+  return renderHtml(strip(body), flattenRivetSpecs(parsed.rivets), openIds);
+}
+
+describe("rivets first, then markdown", () => {
+  it("detects 做法 A delimiters", () => {
+    assert.equal(hasMarkDelimiters('<<r id="r1">>x<</r id="r1">>'), true);
+    assert.equal(hasMarkDelimiters("**hello**"), false);
+    assert.equal(hasMarkDelimiters("# Title"), false);
+  });
+
+  it("parses marks on the tagged body; markdown only sees strip()", () => {
+    const clean = "see **x** and *y*";
+    const body = add(clean, [{ id: "r1", start: 4, end: 9 }]);
+    assert.equal(hasMarkDelimiters(body), true);
+    assert.equal(hasMarkDelimiters(strip(body)), false);
+    assert.equal(strip(body), clean);
+    assert.deepEqual(parse(body).damage, []);
+
+    const html = renderFromMarked(body);
+    assert.doesNotMatch(html, /<<r/);
+    assert.equal(
+      html,
+      "<p>see <mark data-rivet=\"r1\"><strong>x</strong></mark> and <em>y</em></p>\n",
+    );
+  });
+
+  it("does not let ** wrap or split mark delimiters", () => {
+    const clean = "**x**";
+    const body = add(clean, [{ id: "r1", start: 2, end: 3 }]);
+    assert.equal(body, '**<<r id="r1">>x<</r id="r1">>**');
+    assert.deepEqual(parse(body).damage, []);
+    assert.equal(strip(body), clean);
+
+    const html = renderFromMarked(body);
+    assert.equal(html, '<p><strong><mark data-rivet="r1">x</mark></strong></p>\n');
+    assert.doesNotMatch(html, /<<r/);
+    assert.doesNotMatch(html, /&lt;&lt;r/);
+  });
+
+  it("does not let # split a rivet that sits in a heading", () => {
+    const clean = "# Hello";
+    const body = add(clean, [{ id: "r1", start: 2, end: 7 }]);
+    assert.equal(body, '# <<r id="r1">>Hello<</r id="r1">>');
+    assert.equal(strip(body), clean);
+
+    const html = renderFromMarked(body);
+    assert.equal(html, '<h1><mark data-rivet="r1">Hello</mark></h1>\n');
+    assert.doesNotMatch(html, /<<r/);
+  });
+
+  it("keeps nested rivets after markdown", () => {
+    const clean = "outer inner end";
+    const body = add(clean, [
+      { id: "outer", start: 0, end: 11 },
+      { id: "inner", start: 6, end: 11 },
+    ]);
+    const html = renderFromMarked(body, ["inner"]);
+    assert.equal(
+      html,
+      '<p><mark data-rivet="outer">outer <mark data-rivet="inner" class="open">inner</mark></mark> end</p>\n',
+    );
   });
 });

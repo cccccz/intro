@@ -96,3 +96,4 @@ P1 没有转义。宿主里不要写 `<<r` 或 `<</r` 再紧跟一行内的 `>>`
 - 不是 HTML，不是 `<mark>`，不是 mockup 语法
 - 不是 CriticMarkup，不是侧车 JSON / 下标表
 - 本轮不规定 Markdown 渲染、公式、导出
+- P2 屏幕 **Rendered** 只投影：先 `parse` / `strip`（铆点），再对干净正文做 markdown。不得对 `<<r>>` 定界符跑 markdown（`**` / `#` 等不能拆标记）

@@ -93,6 +93,19 @@ describe("M1 write loop on disk", () => {
     assert.doesNotMatch(body, /data-rivet/);
   });
 
+  it("persistClean keeps markdown source and <<r>> marks, not rendered HTML", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "host01", body: "" });
+    persistClean(lib, "host01", "# Hi\n\n**bold**");
+    hangSide(lib, "host01", { start: 8, end: 12 });
+    const body = lib.load("host01").body;
+    assert.match(body, /# Hi/);
+    assert.match(body, /<<r id="[^"]+"[^>]*>>bold<<\/r id="/);
+    assert.doesNotMatch(body, /<h1>|<strong>|<mark/);
+    assert.equal(strip(body), "# Hi\n\n**bold**");
+    assert.deepEqual(parse(body).damage, []);
+  });
+
   it("keeps fitting rivets when clean text is only appended", () => {
     const lib = tmpLibrary();
     lib.createPiece({ id: "host01", body: "hello" });

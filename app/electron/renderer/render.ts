@@ -475,6 +475,11 @@ function renderMarkdown(src: string, math: MathRenderer): { html: string; math: 
   return { html: md.render(src), math: store };
 }
 
+/** True when text still has 做法 A delimiters. Markdown must not see these. */
+export function hasMarkDelimiters(text: string): boolean {
+  return /<<r(?:\s|\/)/.test(text) || /<<\/r\b/.test(text);
+}
+
 /** CommonMark subset + `$` / `$$` math. Projection only; do not persist. */
 export function markupMarkdown(text: string, math: MathRenderer = fallbackMath): string {
   const rendered = renderMarkdown(text, math);
@@ -482,9 +487,10 @@ export function markupMarkdown(text: string, math: MathRenderer = fallbackMath):
 }
 
 /**
- * Read-only projection of one piece. Input is clean text (strip of `.intro.md`).
- * `[data-rivet]` here is view-layer geometry, not SoT — do not persist this HTML.
- * Authority stays 做法 A: rivet marks in the source body file.
+ * Read-only Rendered projection. Input is **clean** text (already `strip` of
+ * `.intro.md`) plus rivet ranges from `parse` — rivets first, then markdown.
+ * Never pass a marked body: `**` / `#` must not tokenize `<<r>>` delimiters.
+ * `[data-rivet]` is view-layer geometry, not SoT. Do not persist this HTML.
  *
  * Supported subset: headings, lists, bold/italic, links, inline code, fenced
  * code, blockquotes, `$...$` / `$$...$$` math. Raw HTML and images are not
