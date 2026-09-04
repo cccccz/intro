@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { parse, strip } from "../marks/index.ts";
 import { Library } from "../library/index.ts";
-import { dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
+import { detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
 import { HOST_EXT, OverlayError, isPdfMagic, minimalPdf } from "../pdf/index.ts";
 import {
   ROOT_ID,
@@ -30,6 +30,39 @@ afterEach(() => {
 });
 
 describe("M1 write loop on disk", () => {
+  it("detaches one reused link without changing the target, its children, or other links", () => {
+    const lib = tmpLibrary();
+    const host = lib.createPiece({ body: "first second" });
+    const side = lib.createPiece({ body: "child note" });
+    hangSide(lib, side.id, { start: 0, end: 5 });
+    const first = hangSide(lib, host.id, { start: 0, end: 5 }, { sideId: side.id });
+    const second = hangSide(lib, host.id, { start: 6, end: 12 }, { sideId: side.id });
+    const before = lib.load(side.id).body;
+    const count = lib.list().length;
+    const updated = detachSide(lib, host.id, second.rivetId, "first second edited");
+    assert.equal(strip(updated.body), "first second edited");
+    assert.deepEqual(pieceView(updated).rivets.map(r => r.id), [first.rivetId]);
+    assert.equal(lib.load(side.id).body, before);
+    assert.equal(lib.list().length, count);
+  });
+
+  it("detaches a PDF overlay without deleting notes or modifying PDF bytes", () => {
+    const lib = tmpLibrary();
+    const src = path.join(lib.root, "source.pdf");
+    fs.writeFileSync(src, minimalPdf());
+    const host = lib.attachPdf(src, { id: "pdf01" });
+    const anchor = { page: 1, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 } };
+    const first = hangPdfSide(lib, host.id, [anchor]);
+    const second = hangPdfSide(lib, host.id, [anchor], { sideId: first.side.id });
+    const pdfPath = pieceView(host).pdfPath!;
+    const before = fs.readFileSync(pdfPath);
+    const count = lib.list().length;
+    const updated = detachSide(lib, host.id, second.rivetId);
+    assert.deepEqual(pieceView(updated).overlayRivets.map(r => r.id), [first.rivetId]);
+    assert.equal(lib.load(first.side.id).id, first.side.id);
+    assert.equal(lib.list().length, count);
+    assert.deepEqual(fs.readFileSync(pdfPath), before);
+  });
   it("grows a nested rivet tree from clean text", () => {
     const lib = new Library(
       fs.mkdtempSync(path.join(os.tmpdir(), "intro-write-")),

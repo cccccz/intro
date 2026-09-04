@@ -33,6 +33,7 @@ export type Ok<T> = { ok: true } & T;
 export type Err = { ok: false; error: string };
 
 export type IntroApi = {
+  detachSide: (hostId: string, rivetId: string, clean?: string) => Promise<Ok<{ host: PieceDto }> | Err>;
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
   listPieces: () => Promise<Ok<{ pieces: ListedPieceDto[] }> | Err>;
@@ -69,6 +70,7 @@ export type IntroApi = {
 };
 
 export const IPC = {
+  detachSide: "piece:detachSide",
   openLibrary: "library:open",
   openLibraryPath: "library:openPath",
   listPieces: "library:list",

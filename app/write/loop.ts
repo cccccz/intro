@@ -4,6 +4,7 @@ import {
   AddError,
   add,
   addMark,
+  removeMark,
   flattenRivetSpecs,
   parse,
   strip,
@@ -162,6 +163,17 @@ export type DropResult = {
   deleted: string[];
   hosts: Piece[];
 };
+
+/** Remove only this host's rivet. Target notes and their links remain intact. */
+export function detachSide(lib: Library, hostId: string, rivetId: string, clean?: string): Piece {
+  let host = lib.load(hostId);
+  if (host.medium === "pdf") {
+    return lib.saveOverlay(hostId, removeOverlayRivet(host.overlay, rivetId));
+  }
+  if (clean !== undefined) host = persistClean(lib, hostId, clean);
+  if (host.medium !== "text") throw new Error("Expected text host");
+  return lib.save(hostId, removeMark(host.body, rivetId));
+}
 
 type InboundLink = {
   hostId: string;

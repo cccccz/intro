@@ -7,6 +7,7 @@ import {
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
 import { orderCards } from "./card-order.ts";
+import { cardHeightKey, clampCardHeight, loadCardHeight, saveCardHeight, resizeCardPair } from "./card-height.ts";
 import { readingKey } from "./pdf-reading.ts";
 import {
   COLUMN_MIN,
@@ -69,6 +70,7 @@ type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: string };
 
 type IntroApi = {
+  detachSide: (hostId: string, rivetId: string, clean?: string) => Promise<Ok<{ host: PieceDto }> | Err>;
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
   listPieces: () => Promise<Ok<{ pieces: LibraryDto["pieces"] }> | Err>;
@@ -322,7 +324,7 @@ function insertColumnSplitters(): void {
 
 async function renamePiece(id: string): Promise<void> {
   const shown = titledOf(id) ? titleOf(id) : "";
-  const next = window.prompt("Display name (blank uses short id or excerpt; file id stays)", shown);
+  const next = await askTitle("重命名", shown);
   if (next === null) {
     return;
   }
@@ -368,6 +370,36 @@ type CtxItem = {
   disabled?: boolean;
   run: () => void;
 };
+
+function askTitle(label: string, value = ""): Promise<string | null> {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "piece-picker";
+    const form = document.createElement("form");
+    const heading = document.createElement("h2");
+    heading.textContent = label;
+    const input = document.createElement("input");
+    input.value = value;
+    input.setAttribute("aria-label", "标题");
+    input.placeholder = "标题（留空使用默认名称）";
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = "保存";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    let answer: string | null = null;
+    form.onsubmit = (event) => { event.preventDefault(); answer = input.value; dialog.close(); };
+    cancel.onclick = () => dialog.close();
+    dialog.addEventListener("close", () => { dialog.remove(); resolve(answer); }, { once: true });
+    form.append(heading, input, save, cancel);
+    dialog.append(form);
+    document.body.append(dialog);
+    dialog.showModal();
+    input.focus();
+    input.select();
+  });
+}
 
 let ctxMenu: HTMLElement | null = null;
 
@@ -806,6 +838,35 @@ async function confirmDropSide(pieceId: string): Promise<void> {
   );
 }
 
+async function detachNode(node: OpenNode): Promise<void> {
+  const parent = state.nodes.find((entry) => entry.id === node.parentId);
+  if (!parent || !node.viaRivetId) return;
+  // Preserve edits before rebuilding columns, including the detached note itself.
+  for (const surface of el.columns.querySelectorAll<HTMLElement>("[data-piece-id]")) {
+    const id = surface.dataset.pieceId;
+    const editor = surface.querySelector<HTMLTextAreaElement>("textarea.editor");
+    if (!id || !editor || editor.value === state.views[id]?.clean) continue;
+    const timer = persistTimers.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    persistTimers.delete(id);
+    const saved = await window.intro.persistClean(id, editor.value);
+    if (!saved.ok) { setStatus(saved.error, true); return; }
+    state.views[id] = saved.piece;
+  }
+  const result = await window.intro.detachSide(parent.pieceId, node.viaRivetId);
+  if (!result.ok) { setStatus(result.error, true); return; }
+  state.views[parent.pieceId] = result.host;
+  for (const entry of [...state.nodes]) {
+    const host = state.nodes.find((item) => item.id === entry.parentId);
+    if (host?.pieceId === parent.pieceId && entry.viaRivetId === node.viaRivetId) {
+      state.nodes = closeNode(state.nodes, entry.id);
+    }
+  }
+  renderSidebar();
+  renderColumns();
+  setStatus("已解除这条挂接，笔记及其他引用已保留。");
+}
+
 function renderSidebar(): void {
   el.list.replaceChildren();
   el.sidebarEmpty.hidden = state.pieces.length > 0 || !state.root;
@@ -842,7 +903,7 @@ function renderSidebar(): void {
       const drop = document.createElement("button");
       drop.type = "button";
       drop.className = "piece-drop danger";
-      drop.textContent = "Delete";
+      drop.textContent = "删除笔记";
       drop.title = "Delete this text piece and unreferenced children";
       drop.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -1164,12 +1225,19 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   };
 
   const overlayCount = view?.overlayRivets.length ?? 0;
-  const rivetMenu = document.createElement("details");
-  rivetMenu.className = "pdf-menu pdf-rivets-menu";
-  const rivetSummary = document.createElement("summary");
+  const rivetSummary = document.createElement("button");
+  rivetSummary.type = "button";
   rivetSummary.textContent = `Rivets (${overlayCount})`;
   rivetSummary.title = "Overlay rivets — jump to a region or open its side";
   const rivetNav = document.createElement("nav");
+  rivetNav.className = "pdf-outline-drawer pdf-rivets-drawer";
+  rivetNav.hidden = true;
+  const setRivetsOpen = (on: boolean): void => {
+    rivetNav.hidden = !on;
+    rivetSummary.classList.toggle("on", on);
+    rivetSummary.setAttribute("aria-expanded", String(on));
+  };
+  setRivetsOpen(false);
   rivetNav.setAttribute("aria-label", "Overlay rivets");
   if (!view || overlayCount === 0) {
     const empty = document.createElement("p");
@@ -1194,18 +1262,17 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
       },
     );
   }
-  rivetMenu.append(rivetSummary, rivetNav);
+  body.append(rivetNav);
   outlineBtn.addEventListener("click", () => {
     if (outlineBtn.disabled) {
       return;
     }
-    rivetMenu.open = false;
+    setRivetsOpen(false);
     setOutlineOpen(drawer.hidden);
   });
-  rivetMenu.addEventListener("toggle", () => {
-    if (rivetMenu.open) {
-      setOutlineOpen(false);
-    }
+  rivetSummary.addEventListener("click", () => {
+    setOutlineOpen(false);
+    setRivetsOpen(rivetNav.hidden);
   });
 
   chrome.append(
@@ -1215,7 +1282,7 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     fitBtn,
     pageLabel,
     outlineBtn,
-    rivetMenu,
+    rivetSummary,
   );
 
   surface.append(chrome, body);
@@ -1252,10 +1319,8 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
       window.removeEventListener("keydown", onOutlineKey);
       return;
     }
-    if (drawer.hidden) {
-      return;
-    }
     const target = ev.target as Node;
+    if (!rivetNav.contains(target) && !rivetSummary.contains(target)) setRivetsOpen(false);
     if (drawer.contains(target) || outlineBtn.contains(target)) {
       return;
     }
@@ -1268,6 +1333,7 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
       return;
     }
     if (ev.key === "Escape") {
+      setRivetsOpen(false);
       hideCtxMenu();
       if (!drawer.hidden) {
         setOutlineOpen(false);
@@ -1479,14 +1545,82 @@ function renderCard(node: OpenNode): HTMLElement {
   const drop = document.createElement("button");
   drop.type = "button";
   drop.className = "danger";
-  drop.textContent = "Delete";
+  drop.textContent = "删除笔记";
   drop.title = "Delete this note from the library and unreferenced children";
   drop.addEventListener("click", () => {
     void confirmDropSide(node.pieceId);
   });
-  head.append(titles, rename, close, drop);
+  const detach = document.createElement("button");
+  detach.type = "button";
+  detach.textContent = "解除挂接";
+  detach.title = "仅移除这条连接，保留笔记及其他引用";
+  detach.onclick = async () => {
+    detach.disabled = true;
+    try { await detachNode(node); } finally { detach.disabled = false; }
+  };
+  head.append(titles, rename, close, detach, drop);
   card.append(head);
   bindSurface(node, card);
+  const heightKey = cardHeightKey(state.root ?? "", node.id);
+  const savedHeight = loadCardHeight(localStorage, heightKey);
+  if (savedHeight !== null) card.style.height = `${savedHeight}px`;
+  // Old independent top gaps are deliberately ignored: adjacent cards share an edge.
+  const nextVisibleCard = (): HTMLElement | undefined => {
+    let next = card.nextElementSibling as HTMLElement | null;
+    while (next && next.hidden) next = next.nextElementSibling as HTMLElement | null;
+    return next ?? undefined;
+  };
+  const resize = document.createElement("div");
+  resize.className = "card-resize";
+  resize.setAttribute("role", "separator");
+  resize.setAttribute("aria-orientation", "horizontal");
+  resize.title = "拖动共享边界调整上下笔记高度；双击恢复默认";
+  resize.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resize.classList.add("dragging");
+    document.body.classList.add("is-row-resizing");
+    const startY = event.clientY;
+    const startHeight = card.getBoundingClientRect().height;
+    const lower = nextVisibleCard();
+    const lowerHeight = lower?.getBoundingClientRect().height ?? 0;
+    const lowerKey = lower ? cardHeightKey(state.root ?? "", lower.dataset.nodeId!) : null;
+    const move = (next: PointerEvent): void => {
+      if (next.pointerId !== event.pointerId) return;
+      const delta = next.clientY - startY;
+      const [height, below] = lower
+        ? resizeCardPair(startHeight, lowerHeight, delta)
+        : [clampCardHeight(startHeight + delta), 0];
+      if (lower && lowerKey) {
+        lower.style.height = `${below}px`;
+        saveCardHeight(localStorage, lowerKey, below);
+      }
+      card.style.height = `${height}px`;
+      saveCardHeight(localStorage, heightKey, height);
+      scheduleChrome();
+    };
+    const stop = (): void => {
+      resize.classList.remove("dragging");
+      document.body.classList.remove("is-row-resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  });
+  resize.addEventListener("dblclick", () => {
+    card.style.removeProperty("height");
+    const lower = nextVisibleCard();
+    if (lower) {
+      lower.style.removeProperty("height");
+      saveCardHeight(localStorage, cardHeightKey(state.root ?? "", lower.dataset.nodeId!), null);
+    }
+    saveCardHeight(localStorage, heightKey, null);
+    scheduleChrome();
+  });
+  card.append(resize);
   card.addEventListener("pointerenter", () => {
     setHot(node.id);
   });
@@ -1749,7 +1883,7 @@ el.openPdf.addEventListener("click", async () => {
 });
 
 el.newPiece.addEventListener("click", async () => {
-  const title = window.prompt("Display name (blank uses a short id; file id stays)", "");
+  const title = await askTitle("新建笔记");
   if (title === null) {
     return;
   }

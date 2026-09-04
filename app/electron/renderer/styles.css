@@ -309,6 +309,8 @@ body.is-col-resizing .pdf-overlay {
 }
 
 .card {
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--line);
@@ -717,11 +719,27 @@ body.is-col-resizing .pdf-overlay {
   overflow-anchor: none;
   position: absolute;
   inset: 0;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
   padding: 4px;
   background: #e4e4e7;
 }
+
+.card-resize {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.card-resize:hover,
+.card-resize.dragging { background: #93c5fd; }
+body.is-row-resizing { cursor: ns-resize !important; user-select: none; }
+.column.stack .card { height: 320px; min-height: 120px; }
+.column.stack .card-body { min-height: 0; }
+.card-hd { flex-shrink: 0; }
 
 .piece-picker {
   width: min(520px, 85vw);
