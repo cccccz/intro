@@ -39,6 +39,7 @@ type PieceDto = {
   path: string;
   medium: "text" | "pdf";
   title: string;
+  titled: boolean;
   body: string;
   clean: string;
   rivets: RivetSpec[];
@@ -53,6 +54,7 @@ type ListedPieceDto = {
   path: string;
   medium: "text" | "pdf";
   title: string;
+  titled: boolean;
 };
 
 type LibraryDto = {
@@ -224,10 +226,44 @@ let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
 
-function titleOf(pieceId: string): string {
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
+}
+
+function excerptFor(node: OpenNode): string | undefined {
+  if (!node.parentId || !node.viaRivetId) {
+    return undefined;
+  }
+  const parent = state.nodes.find((n) => n.id === node.parentId);
+  if (!parent) {
+    return undefined;
+  }
+  const view = state.views[parent.pieceId];
+  const rivet = view?.rivets.find((r) => r.id === node.viaRivetId);
+  if (rivet && view) {
+    return quoteOf(view.clean, rivet.start, rivet.end);
+  }
+  const overlay = view?.overlayRivets.find((r) => r.id === node.viaRivetId);
+  return overlay ? overlayQuote(overlay) : undefined;
+}
+
+function titledOf(pieceId: string): boolean {
+  return Boolean(state.views[pieceId]?.titled || state.pieces.find((p) => p.id === pieceId)?.titled);
+}
+
+function titleOf(pieceId: string, excerpt?: string): string {
+  if (titledOf(pieceId)) {
+    return state.views[pieceId]?.title
+      ?? state.pieces.find((p) => p.id === pieceId)?.title
+      ?? shortId(pieceId);
+  }
+  const trimmed = excerpt?.replace(/\s+/g, " ").trim();
+  if (trimmed && trimmed !== "(empty)") {
+    return trimmed;
+  }
   return state.views[pieceId]?.title
     ?? state.pieces.find((p) => p.id === pieceId)?.title
-    ?? "Untitled";
+    ?? shortId(pieceId);
 }
 
 function persistLayout(): void {
@@ -274,7 +310,8 @@ function insertColumnSplitters(): void {
 }
 
 async function renamePiece(id: string): Promise<void> {
-  const next = window.prompt("Display name (file id stays on disk)", titleOf(id));
+  const shown = titledOf(id) ? titleOf(id) : "";
+  const next = window.prompt("Display name (blank uses short id or excerpt; file id stays)", shown);
   if (next === null) {
     return;
   }
@@ -296,7 +333,8 @@ function paintTitles(): void {
     if (!pieceId) {
       return;
     }
-    const title = titleOf(pieceId);
+    const open = state.nodes.find((n) => n.id === (node as HTMLElement).dataset.nodeId);
+    const title = titleOf(pieceId, open ? excerptFor(open) : undefined);
     node.querySelectorAll(".piece-title").forEach((label) => {
       label.textContent = title;
     });
@@ -1132,7 +1170,7 @@ function renderCard(node: OpenNode): HTMLElement {
   titles.className = "head-titles";
   const name = document.createElement("strong");
   name.className = "piece-title";
-  name.textContent = titleOf(node.pieceId);
+  name.textContent = titleOf(node.pieceId, excerptFor(node));
   name.title = view?.path ?? node.pieceId;
   const id = document.createElement("span");
   id.className = "id piece-id";
@@ -1409,11 +1447,14 @@ el.openPdf.addEventListener("click", async () => {
 });
 
 el.newPiece.addEventListener("click", async () => {
-  const title = window.prompt("Title for this piece", "Untitled");
+  const title = window.prompt("Display name (blank uses a short id; file id stays)", "");
   if (title === null) {
     return;
   }
-  const result = await window.intro.createPiece({ body: "", title });
+  const result = await window.intro.createPiece({
+    body: "",
+    ...(title.trim() ? { title } : {}),
+  });
   if (!result.ok) {
     setStatus(result.error, true);
     return;

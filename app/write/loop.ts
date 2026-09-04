@@ -17,6 +17,7 @@ export type PieceView = {
   path: string;
   medium: "text" | "pdf";
   title: string;
+  titled: boolean;
   body: string;
   clean: string;
   rivets: RivetSpec[];
@@ -39,6 +40,7 @@ export function pieceView(piece: Piece): PieceView {
       path: piece.path,
       medium: "pdf",
       title: piece.title,
+      titled: piece.titled,
       body: "",
       clean: "",
       rivets: [],
@@ -54,6 +56,7 @@ export function pieceView(piece: Piece): PieceView {
     path: piece.path,
     medium: "text",
     title: piece.title,
+    titled: piece.titled,
     body: piece.body,
     clean: strip(piece.body),
     rivets: flattenRivetSpecs(parsed.rivets),

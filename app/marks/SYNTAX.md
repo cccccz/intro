@@ -2,7 +2,9 @@
 
 正文里的标记是钉的权威（结论第 29 条，做法 A）。不另存一份以下标为主的 graph。不使用 mockup 预埋的 `<mark class="rivet">`。
 
-本草案只服务**文本宿主**。PDF 宿主不把 `<<r>>` 写进 PDF 字节，也不假装字符下标；铆点在 `{id}.intro.overlay.json`（见 `app/pdf/` 与 `app/README.md`）。
+同一文件文首可以有 YAML frontmatter（目前只用 `title:` 显示名）。那不是第二种 id，也不进入下面的 rivet 扫描；parse / strip / add 只处理关闭 `---` 之后的正文。
+
+本草案只服务**文本宿主**。PDF 宿主不把 `<<r>>` 写进 PDF 字节，也不假装字符下标；铆点在 `{id}.intro.overlay.json`（见 `app/pdf/` 与 `app/README.md`）。PDF 侧边仍是 `{id}.intro.md`，同一套 frontmatter。
 
 ## 定界符
 

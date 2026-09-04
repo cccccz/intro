@@ -56,11 +56,22 @@ describe("M1 write loop on disk", () => {
 
     const view = pieceView(lib.load("host01"));
     assert.equal(view.clean, "宿主一段可以再挂侧边。");
-    assert.equal(view.title, "Untitled");
+    assert.equal(view.title, "host01");
+    assert.equal(view.titled, false);
     assert.equal(view.rivets[0].to, first.side.id);
     lib.saveTitle("host01", "Host note");
     assert.equal(pieceView(lib.load("host01")).title, "Host note");
     assert.equal(strip(lib.load("host01").body), "宿主一段可以再挂侧边。");
+    const onDisk = fs.readFileSync(path.join(lib.root, "host01.intro.md"), "utf8");
+    assert.match(onDisk, /^---\ntitle: Host note\n---\n/);
+    assert.match(onDisk, /<<r id="/);
+    persistClean(lib, "host01", "宿主一段可以再挂侧边。续");
+    const afterPersist = fs.readFileSync(path.join(lib.root, "host01.intro.md"), "utf8");
+    assert.match(afterPersist, /^---\ntitle: Host note\n---\n/);
+    assert.equal(strip(lib.load("host01").body), "宿主一段可以再挂侧边。续");
+    assert.equal(lib.load("host01").id, "host01");
+    assert.equal(path.basename(lib.load("host01").path), "host01.intro.md");
+    assert.equal(fs.existsSync(path.join(lib.root, "host01.intro.meta.json")), false);
 
     let columns = openRoot("host01");
     columns = openSide(columns, ROOT_ID, first.side.id, first.rivetId);
@@ -225,6 +236,20 @@ describe("PDF overlay hang", () => {
     nodes = openSide(nodes, hung.rivetId, nested.side.id, nested.rivetId);
     assert.equal(nodesAtDepth(nodes, 1).length, 1);
     assert.equal(nodesAtDepth(nodes, 2)[0]?.pieceId, nested.side.id);
+
+    const rivetId = hung.rivetId;
+    const sidePath = hung.side.path;
+    lib.saveTitle(hung.side.id, "Region note");
+    const sideFile = fs.readFileSync(sidePath, "utf8");
+    assert.match(sideFile, /^---\ntitle: Region note\n---\n/);
+    assert.equal(path.basename(sidePath), `${hung.side.id}.intro.md`);
+    const hostAfter = lib.load("pdf01");
+    assert.equal(hostAfter.medium, "pdf");
+    if (hostAfter.medium === "pdf") {
+      assert.equal(hostAfter.overlay.rivets[0].id, rivetId);
+      assert.equal(hostAfter.overlay.rivets[0].to, hung.side.id);
+    }
+    assert.equal(fs.existsSync(path.join(lib.root, `${hung.side.id}.intro.meta.json`)), false);
   });
 
   it("refuses text-offset hang/persist on a PDF host", () => {

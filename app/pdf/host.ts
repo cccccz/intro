@@ -12,8 +12,10 @@ export type PdfHostMeta = {
   id: string;
   /** Basename of the immutable PDF copy next to this file (`{id}.pdf`). */
   pdf: string;
-  /** Original filename when attached; display only. */
+  /** Original filename when attached; display fallback, not an id. */
   sourceName?: string;
+  /** Mutable display name. Id remains the filename stem. */
+  title?: string;
 };
 
 export function hostFileName(id: string): string {
@@ -57,12 +59,18 @@ export function parseHostMeta(raw: string): PdfHostMeta {
   if (sourceName !== undefined && typeof sourceName !== "string") {
     throw new OverlayError("sourceName must be a string when present");
   }
+  const title = obj.title;
+  if (title !== undefined && typeof title !== "string") {
+    throw new OverlayError("title must be a string when present");
+  }
+  const named = title?.trim();
   return {
     formatVersion: HOST_FORMAT_VERSION,
     medium: "pdf",
     id,
     pdf,
     ...(sourceName ? { sourceName } : {}),
+    ...(named ? { title: named } : {}),
   };
 }
 
@@ -71,7 +79,7 @@ export function serializeHostMeta(meta: PdfHostMeta): string {
   return `${JSON.stringify(meta, null, 2)}\n`;
 }
 
-export function createHostMeta(id: string, sourceName?: string): PdfHostMeta {
+export function createHostMeta(id: string, sourceName?: string, title?: string): PdfHostMeta {
   return parseHostMeta(
     JSON.stringify({
       formatVersion: HOST_FORMAT_VERSION,
@@ -79,6 +87,7 @@ export function createHostMeta(id: string, sourceName?: string): PdfHostMeta {
       id,
       pdf: pdfFileName(id),
       ...(sourceName ? { sourceName } : {}),
+      ...(title ? { title } : {}),
     }),
   );
 }

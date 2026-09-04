@@ -7,7 +7,6 @@ import { add, parse, strip } from "../marks/index.ts";
 import { HOST_EXT, OVERLAY_EXT, isPdfMagic, minimalPdf } from "../pdf/index.ts";
 import { OverlayError } from "../pdf/overlay.ts";
 import { Library } from "./library.ts";
-import { META_EXT, parseMeta } from "./meta.ts";
 import { PIECE_EXT } from "./types.ts";
 
 const temps: string[] = [];
@@ -87,45 +86,57 @@ describe("library on disk", () => {
 });
 
 describe("display titles", () => {
-  it("createPiece can write an initial title sidecar", () => {
+  it("writes YAML frontmatter in the same .intro.md and keeps mark body", () => {
     const lib = tmpLibrary();
     const piece = lib.createPiece({ id: "note01", body: "hello", title: " First note " });
     assert.equal(piece.title, "First note");
+    assert.equal(piece.titled, true);
     assert.equal(lib.load("note01").body, "hello");
-    assert.equal(parseMeta(fs.readFileSync(path.join(lib.root, `note01${META_EXT}`), "utf8")).title, "First note");
+    const disk = fs.readFileSync(path.join(lib.root, "note01.intro.md"), "utf8");
+    assert.match(disk, /^---\ntitle: First note\n---\nhello$/);
+    assert.equal(fs.existsSync(path.join(lib.root, "note01.intro.meta.json")), false);
   });
 
-  it("saves a title sidecar without rewriting the mark body", () => {
+  it("renames via frontmatter without changing id, filename, or rivet marks", () => {
     const lib = tmpLibrary();
     const marked = add("宿主正文", [{ id: "rv1", to: "side01", start: 0, end: 2 }]);
     lib.createPiece({ id: "host01", body: marked });
     const before = lib.load("host01").body;
     const saved = lib.saveTitle("host01", "  Proof sketch  ");
     assert.equal(saved.medium, "text");
+    assert.equal(saved.id, "host01");
+    assert.equal(path.basename(saved.path), "host01.intro.md");
     assert.equal(saved.title, "Proof sketch");
     assert.equal(lib.load("host01").body, before);
-    assert.equal(lib.load("host01").title, "Proof sketch");
-    const raw = fs.readFileSync(path.join(lib.root, `host01${META_EXT}`), "utf8");
-    assert.deepEqual(parseMeta(raw).title, "Proof sketch");
+    assert.match(lib.load("host01").body, /<<r id="rv1"/);
+    const raw = fs.readFileSync(path.join(lib.root, "host01.intro.md"), "utf8");
+    assert.match(raw, /^---\ntitle: Proof sketch\n---\n/);
+    assert.ok(raw.endsWith(marked) || raw.includes(marked));
+    assert.equal(fs.existsSync(path.join(lib.root, "host01.intro.meta.json")), false);
     assert.equal(lib.list().find((p) => p.id === "host01")?.title, "Proof sketch");
-    assert.notEqual(lib.list().find((p) => p.id === "host01")?.title, "host01");
   });
 
-  it("falls back when the title is blank; PDF defaults to the filename", () => {
+  it("falls back to short id; PDF defaults to the filename; sides use frontmatter", () => {
     const lib = tmpLibrary();
     lib.createPiece({ id: "note01", body: "x" });
-    assert.equal(lib.load("note01").title, "Untitled");
+    assert.equal(lib.load("note01").title, "note01");
+    assert.equal(lib.load("note01").titled, false);
     lib.saveTitle("note01", "   ");
-    assert.equal(lib.load("note01").title, "Untitled");
+    assert.equal(lib.load("note01").title, "note01");
+    assert.equal(fs.readFileSync(path.join(lib.root, "note01.intro.md"), "utf8"), "x");
     const src = path.join(lib.root, "paper.pdf");
     fs.writeFileSync(src, minimalPdf());
     const host = lib.attachPdf(src, { id: "pdf01" });
     assert.equal(host.title, "paper.pdf");
+    assert.equal(host.titled, false);
     const renamed = lib.saveTitle("pdf01", "Levy processes");
     assert.equal(renamed.title, "Levy processes");
+    assert.equal(renamed.titled, true);
+    assert.equal(path.basename(renamed.path), "pdf01.intro.host.json");
     assert.equal(lib.load("pdf01").title, "Levy processes");
     assert.ok(isPdfMagic(lib.readPdfBytes("pdf01")));
     assert.equal(fs.existsSync(path.join(lib.root, "pdf01.intro.md")), false);
+    assert.equal(fs.existsSync(path.join(lib.root, "pdf01.intro.meta.json")), false);
   });
 });
 

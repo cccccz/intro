@@ -6,6 +6,7 @@ export type PieceDto = {
   path: string;
   medium: "text" | "pdf";
   title: string;
+  titled: boolean;
   body: string;
   clean: string;
   rivets: RivetSpec[];
@@ -20,6 +21,7 @@ export type ListedPieceDto = {
   path: string;
   medium: "text" | "pdf";
   title: string;
+  titled: boolean;
 };
 
 export type LibraryDto = {

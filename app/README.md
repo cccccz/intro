@@ -27,7 +27,7 @@ npm run app -- --library /path/to/library
 ## M1 写回路（空库 → 嵌套铆点树）
 
 1. **Open library**：选一个本地文件夹。空文件夹就是新库。
-2. **New piece**：提示输入显示名，建第一篇 `{id}.intro.md`（id 仍是文件名主干）。列表和卡片上主标签是标题；id 只是小号/tooltip。**Rename** 只写 `{id}.intro.meta.json`，不改正文。
+2. **New piece**：可填显示名，建 `{id}.intro.md`。`{id}` 是文件名主干，也是铆点 `to=`，改名不会改它。列表/卡片主标签是 `title:`；空标题则用短 id 或挂上来的选区摘录。完整 id 只在小号/tooltip。**Rename** 只改文首 YAML `title:`，`persistClean` / `addMark` 保留这段 frontmatter。
 3. 每列/每张卡片可切 **Source** 和 **Rendered**。Source 是这篇的权威面（做法 A：铆点标记在 `{id}.intro.md`）。屏幕上编辑的是清除后的干净正文（`$...$` 仍是源文）；`persistClean` / `addMark` 只走 Source，落盘仍带 `<<r>>` 标记，不写 HTML。Rendered 是同一篇的只读投影，不是第二份正文。顺序是 **先 parse/strip 铆点，再对干净正文做 markdown**（`**` / `#` 等不得拆 `<<r>>` 定界符）。子集：标题、列表、粗体/斜体、链接、行内代码、围栏代码、引用，以及 `$...$` / `$$...$$`（KaTeX）。不渲染原文 HTML 或图片。高亮与导线是视图像，不写入源文。
 4. **划选一段**，点 **New side**：用 `addMark` 往宿主写入 `<<r id="…" to="…">>…<</r id="…">>`，并新建一篇侧边，作为下一列打开。视图像标出该选区，并有导线连到打开的侧边卡片（几何不落盘）。Rendered 里点 New side 会回到 Source 再划。
 5. 在侧边里再划、再挂（d2）。列 = 深度；同一宿主上多个打开的铆点叠在该层 panel 里（多张卡片），不互相顶掉。高亮与导线随滚动/窗口缩放更新。源高亮滚出该列视口则不画对应侧边（不是合上）。
@@ -64,7 +64,15 @@ parse(marked).rivets;    // 嵌套树；damage 非空即损坏
 
 ## 库（一篇一个文件）
 
-文本篇 = 库目录下任意一层的 `{id}.intro.md`。id 即文件名主干；`to` 写篇 id，不写路径。显示名另存在同目录 `{id}.intro.meta.json`，不是 frontmatter，正文仍是标记 SoT。
+文本篇 = 库目录下任意一层的 `{id}.intro.md`。id 即文件名主干；`to` 写篇 id，不写路径。显示名写在同一文件文首：
+
+```yaml
+---
+title: Proof sketch
+---
+```
+
+不是第二种 id，也不是 `.meta.json`。parse/strip/add 只看见 frontmatter 之后的正文（标记 SoT）。空 `title` 时 UI 用短 id 或选区摘录。
 
 ```ts
 import { Library } from "./library/index.ts";
@@ -74,7 +82,7 @@ lib.createPiece({ id: "host01", body: marked });
 lib.save("host01", marked);
 lib.load("host01");
 lib.resolve("host01"); // → 绝对路径
-lib.list();            // id + 路径 + medium，不读正文
+lib.list();            // id + 路径 + medium + 显示名（读文首 frontmatter，不 parse 标记）
 lib.attachPdf("/path/to/paper.pdf");
 ```
 
@@ -85,15 +93,13 @@ lib.attachPdf("/path/to/paper.pdf");
 打开任意本地 PDF 即可。库里每个 PDF 宿主三件一套，**不把 `<<r>>` 或字符下标写进 PDF**：
 
 ```
-{id}.intro.host.json     # medium=pdf, pdf="{id}.pdf", 可选 sourceName
+{id}.intro.host.json     # medium=pdf, pdf="{id}.pdf", 可选 sourceName / title（显示名，不是第二种 id）
 {id}.pdf                 # 附入时的字节副本；之后只读，不写 Annot
 {id}.intro.overlay.json  # rivet id → to + page + user-space rect（原点左下）
-{id}.intro.meta.json     # 可选显示名 { formatVersion, title }；缺省则用 sourceName
-{sideId}.intro.md        # 侧边，做法 A 文本标记
-{sideId}.intro.meta.json # 侧边显示名，同上
+{sideId}.intro.md        # 侧边，做法 A 文本标记；文首 YAML title: 与文本篇相同
 ```
 
-选 sidecar 而不是 YAML frontmatter：正文扫描仍只看见 `<<r>>`，PDF 宿主也没有 `.intro.md` 可写 frontmatter。UI 不得把 UUID 当主标签。
+没有 `{id}.intro.meta.json`。PDF 宿主没有 `.intro.md`（避免和 medium 冲突）；侧边是普通 `.intro.md`。空标题时 PDF 宿主回退到原文件名。UI 不得把 UUID 当主标签。
 
 `overlay` 里的矩形是 PDF 用户空间的轴对齐框。若输入是 QuadPoints（8 个数一组），按四个顶点的 min/max 归一，不假设 Acrobat 与 ISO 顶点顺序一致，也不把选区当成 PDF 文件的字符串下标。
 
