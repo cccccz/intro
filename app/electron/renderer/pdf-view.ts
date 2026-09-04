@@ -1,6 +1,7 @@
 /** Shapes match `app/pdf/overlay.ts`. Duplicated: renderer build cannot import that tree. */
 
 import { clampPage, clampZoom, readingOffset, readingScrollTop, ZOOM_FIT } from "./pdf-nav.ts";
+import { loadReading, saveReading } from "./pdf-reading.ts";
 import {
   PDF_OVERSCAN_PAGES,
   PDF_RESIZE_DEBOUNCE_MS,
@@ -290,6 +291,7 @@ export async function mountPdfView(opts: {
   onRivetLeave?: () => void;
   onRivetClick?: (id: string) => void;
   onPageChange?: (page: number, numPages: number) => void;
+  readingStorageKey?: string;
 }): Promise<PdfViewHandle> {
   const root = opts.root;
   root.replaceChildren();
@@ -298,7 +300,8 @@ export async function mountPdfView(opts: {
   let openIds = opts.openIds;
   let selection: PdfSelection | null = null;
   let dead = false;
-  let zoom = ZOOM_FIT;
+  const savedReading = opts.readingStorageKey ? loadReading(localStorage, opts.readingStorageKey) : null;
+  let zoom = savedReading?.zoom ?? ZOOM_FIT;
   let outlineCache: PdfOutlineEntry[] | null = null;
   const pages: PageSlot[] = [];
   const intersecting = new Set<number>();
@@ -307,6 +310,19 @@ export async function mountPdfView(opts: {
   let layoutGen = 0;
   let syncRaf = 0;
   let resizeTimer = 0;
+  let readingTimer = 0;
+  let readingReady = false;
+  const persistReading = (): void => {
+    if (readingTimer) window.clearTimeout(readingTimer);
+    readingTimer = 0;
+    if (!readingReady || dead || !opts.readingStorageKey || !pages.length) return;
+    const page = readCurrentPage();
+    const slot = pages[page - 1]!;
+    saveReading(localStorage, opts.readingStorageKey, {
+      page, zoom,
+      ...readingOffset(slot.el.offsetTop, slot.el.offsetHeight, root.scrollTop),
+    });
+  };
 
   const scaleFor = async (pageNo: number): Promise<number> => {
     const page = await doc.getPage(pageNo);
@@ -328,6 +344,10 @@ export async function mountPdfView(opts: {
   const emitPage = (): void => {
     if (!dead) {
       opts.onPageChange?.(readCurrentPage(), doc.numPages);
+      if (readingReady) {
+        if (readingTimer) window.clearTimeout(readingTimer);
+        readingTimer = window.setTimeout(persistReading, 300);
+      }
     }
   };
 
@@ -651,6 +671,15 @@ export async function mountPdfView(opts: {
   };
 
   await layoutPlaceholders();
+  if (savedReading && pages.length) {
+    const slot = pages[clampPage(savedReading.page, pages.length) - 1]!;
+    root.scrollTop = readingScrollTop(slot.el.offsetTop, slot.el.offsetHeight, savedReading);
+    intersecting.clear();
+    syncWindow();
+  }
+  readingReady = true;
+  emitPage();
+  window.addEventListener("beforeunload", persistReading);
 
   let lastWidth = root.clientWidth;
   const ro = new ResizeObserver(() => {
@@ -674,6 +703,8 @@ export async function mountPdfView(opts: {
 
   return {
     destroy: () => {
+      persistReading();
+      window.removeEventListener("beforeunload", persistReading);
       dead = true;
       if (syncRaf) {
         cancelAnimationFrame(syncRaf);

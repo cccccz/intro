@@ -7,6 +7,7 @@ import {
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
 import { orderCards } from "./card-order.ts";
+import { readingKey } from "./pdf-reading.ts";
 import {
   COLUMN_MIN,
   bindVSplitter,
@@ -231,7 +232,6 @@ let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
 let pendingPdfPage: { nodeId: string; page: number } | null = null;
-const pendingPdfRestore = new Map<string, { zoom: number; top: number; left: number }>();
 
 function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
@@ -854,20 +854,7 @@ function renderSidebar(): void {
   }
 }
 
-function snapshotPdfViews(): void {
-  pendingPdfRestore.clear();
-  for (const [nodeId, handle] of pdfViews) {
-    const scroll = handle.getScroll();
-    pendingPdfRestore.set(nodeId, {
-      zoom: handle.getZoom(),
-      top: scroll.top,
-      left: scroll.left,
-    });
-  }
-}
-
 function disposePdfViews(): void {
-  snapshotPdfViews();
   for (const handle of pdfViews.values()) {
     handle.destroy();
   }
@@ -1329,6 +1316,7 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     }
     const handle = await mountPdfView({
       root: pane,
+      readingStorageKey: readingKey(state.root ?? "", node.pieceId),
       pieceId: node.pieceId,
       data: result.data,
       rivets: view?.overlayRivets ?? [],
@@ -1352,12 +1340,6 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     });
     pdfViews.get(node.id)?.destroy();
     pdfViews.set(node.id, handle);
-    const restore = pendingPdfRestore.get(node.id);
-    if (restore) {
-      pendingPdfRestore.delete(node.id);
-      await handle.setZoom(restore.zoom);
-      handle.setScroll(restore.top, restore.left);
-    }
     if (pendingPdfPage?.nodeId === node.id) {
       handle.gotoPage(pendingPdfPage.page);
       pendingPdfPage = null;

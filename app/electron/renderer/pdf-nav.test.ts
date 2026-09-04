@@ -14,6 +14,34 @@ import {
   readingScrollTop,
 } from "./pdf-nav.ts";
 import { currentPageFromScroll } from "./pdf-window.ts";
+import { loadReading, readingKey, saveReading } from "./pdf-reading.ts";
+
+describe("persistent PDF reading memory", () => {
+  it("round trips independently for each library and PDF", () => {
+    const data = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value); },
+    };
+    const key = readingKey("library-a", "pdf-a");
+    const position = { page: 200, fraction: 0.4, gap: 0, zoom: 1.25 };
+    saveReading(storage, key, position);
+    assert.deepEqual(loadReading(storage, key), position);
+    assert.equal(loadReading(storage, readingKey("library-b", "pdf-a")), null);
+    assert.equal(loadReading(storage, readingKey("library-a", "pdf-b")), null);
+    const restored = loadReading(storage, key)!;
+    assert.equal(readingScrollTop(120000, 600, restored), 120240);
+  });
+  it("ignores corrupt records and unavailable storage", () => {
+    for (const raw of ["broken", "null", '{}', '{"page":-1}', '{"page":1,"fraction":2,"gap":0,"zoom":1}']) {
+      assert.equal(loadReading({ getItem: () => raw }, "key"), null);
+    }
+    assert.equal(loadReading({ getItem() { throw new Error("blocked"); } }, "key"), null);
+    assert.doesNotThrow(() => saveReading({ setItem() { throw new Error("full"); } }, "key", {
+      page: 1, fraction: 0, gap: 0, zoom: 1,
+    }));
+  });
+});
 
 describe("PDF reading position on resize", () => {
   it("keeps page 200 at 40 percent through repeated width changes", () => {
