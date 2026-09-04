@@ -7,13 +7,18 @@ export const SIDEBAR_MAX = 480;
 export const SIDEBAR_DEFAULT = 200;
 
 export const COLUMN_MIN = 240;
-export const COLUMN_MAX = 960;
+export const COLUMN_MAX = 2800;
 export const COLUMN_DEFAULT = 360;
-export const COLUMN_PDF_DEFAULT = 420;
+export const COLUMN_PDF_DEFAULT = 720;
 
 export type ChromeLayout = {
   sidebarWidth: number;
   columnWidths: Record<string, number>;
+};
+
+export type ColumnSize = {
+  flex: string;
+  width: string;
 };
 
 export function clampSidebarWidth(width: number): number {
@@ -35,6 +40,22 @@ export function defaultColumnWidth(depth: number, pdfHost: boolean): number {
     return COLUMN_PDF_DEFAULT;
   }
   return COLUMN_DEFAULT;
+}
+
+/**
+ * Host column (d0) fills leftover board space until the user drags a splitter.
+ * Side columns and any persisted width stay fixed px.
+ */
+export function columnSize(
+  stored: number | undefined,
+  depth: number,
+  pdfHost: boolean,
+): ColumnSize {
+  if (stored === undefined && depth === 0) {
+    return { flex: "1 1 auto", width: "auto" };
+  }
+  const width = stored ?? defaultColumnWidth(depth, pdfHost);
+  return { flex: `0 0 ${width}px`, width: `${width}px` };
 }
 
 export function emptyLayout(): ChromeLayout {
@@ -91,23 +112,43 @@ export function bindVSplitter(
     clamp: (width: number) => number;
   },
 ): void {
+  if (!el.getAttribute("title")) {
+    el.setAttribute("title", "Drag to resize");
+  }
   el.addEventListener("pointerdown", (ev) => {
     if (ev.button !== 0) {
       return;
     }
     ev.preventDefault();
+    ev.stopPropagation();
     el.classList.add("dragging");
+    document.body.classList.add("is-col-resizing");
+    try {
+      el.setPointerCapture(ev.pointerId);
+    } catch {
+      /* window listeners still drive the drag */
+    }
+    const pointerId = ev.pointerId;
     const startX = ev.clientX;
     const startW = opts.getWidth();
     const move = (e: PointerEvent): void => {
+      if (e.pointerId !== pointerId) {
+        return;
+      }
       opts.setWidth(opts.clamp(startW + (e.clientX - startX)));
     };
-    const up = (): void => {
+    const up = (e: PointerEvent): void => {
+      if (e.pointerId !== pointerId) {
+        return;
+      }
       el.classList.remove("dragging");
+      document.body.classList.remove("is-col-resizing");
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   });
 }

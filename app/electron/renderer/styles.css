@@ -82,21 +82,44 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 .splitter.v-split {
+  position: relative;
   flex: 0 0 6px;
   width: 6px;
   align-self: stretch;
-  cursor: ew-resize;
-  background: var(--line);
-  z-index: 5;
+  cursor: col-resize;
+  background: #d4d4d8;
+  z-index: 8;
+  touch-action: none;
+  user-select: none;
+}
+
+.splitter.v-split::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+  cursor: col-resize;
 }
 
 .splitter.v-split:hover,
 .splitter.v-split.dragging {
-  background: #93c5fd;
+  background: #60a5fa;
 }
 
 #columns > .splitter.v-split {
   flex: 0 0 6px;
+}
+
+body.is-col-resizing,
+body.is-col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-col-resizing .pdf-overlay {
+  pointer-events: none;
 }
 
 #sidebar h2 {
@@ -205,6 +228,7 @@ button:disabled { opacity: 0.4; cursor: default; }
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
 }
@@ -514,7 +538,12 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 .column.pdf-host {
-  flex-basis: 420px;
+  min-width: 240px;
+}
+
+.column.pdf-host > .card-body {
+  flex: 1;
+  min-height: 0;
 }
 
 .pdf-chrome {
@@ -522,6 +551,7 @@ button:disabled { opacity: 0.4; cursor: default; }
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
   background: #fafafa;
@@ -550,10 +580,12 @@ button:disabled { opacity: 0.4; cursor: default; }
   padding: 3px 6px;
 }
 
+.pdf-menu,
 .pdf-outline {
   position: relative;
 }
 
+.pdf-menu summary,
 .pdf-outline summary {
   cursor: pointer;
   list-style: none;
@@ -563,25 +595,40 @@ button:disabled { opacity: 0.4; cursor: default; }
   background: var(--paper);
 }
 
+.pdf-menu summary::-webkit-details-marker,
+.pdf-outline summary::-webkit-details-marker {
+  display: none;
+}
+
 .pdf-outline[data-empty] summary {
   opacity: 0.55;
   cursor: default;
 }
 
+.pdf-menu nav,
 .pdf-outline nav {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 6;
-  min-width: 220px;
-  max-width: 320px;
-  max-height: 240px;
+  z-index: 9;
+  min-width: 240px;
+  max-width: 360px;
+  max-height: min(360px, 50vh);
   overflow: auto;
   padding: 6px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--paper);
   box-shadow: 0 8px 20px rgb(0 0 0 / 0.08);
+}
+
+.pdf-menu nav .rivet {
+  margin-bottom: 4px;
+}
+
+.pdf-menu .empty-rivets {
+  margin: 4px;
+  font-size: 12px;
 }
 
 .pdf-outline ul {

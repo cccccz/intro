@@ -40,8 +40,9 @@ PDF 列顶栏：
 - **Zoom**：`−` / `+` 以「适宽」为 100% 加减（0.25×–4×）。**Fit width** 回到适宽。缩放会重算每页占位高度，只重新 raster 当前可见窗口（overscan 仍是 ±2）。
 - **Page**：输入页码回车，滚到该页占位并保证它进入 raster 窗口。
 - **Outline**：若 PDF 自带书签（`getOutline`），点条目跳到对应页；没有书签则显示 No outline。
+- **Rivets**：overlay 铆点列表在顶栏弹出，不占 PDF 下方常驻高度。点条目滚到该锚所在页，并打开已挂的侧边。
 
-分栏：PIECES 与列之间、列与列之间可拖分割条。宽度记在 `localStorage`（`intro:chrome-layout:v1`），个人自用。
+分栏：PIECES 与板、列与列之间（含最右列右侧）可拖分割条，手柄约 6px，悬停高亮。宿主列默认占满剩余宽度；拖过之后宽度记在 `localStorage`（`intro:chrome-layout:v1`），个人自用。
 
 三种看法、置顶带、导出不在本轮。PDF 文本层划词、摘录重挂、写回 PDF、扫描件 OCR 都还没做。
 

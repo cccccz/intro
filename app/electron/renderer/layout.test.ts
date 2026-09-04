@@ -11,6 +11,7 @@ import {
   SIDEBAR_MIN,
   clampColumnWidth,
   clampSidebarWidth,
+  columnSize,
   defaultColumnWidth,
   emptyLayout,
   loadChromeLayout,
@@ -27,8 +28,22 @@ describe("chrome layout", () => {
     assert.equal(clampColumnWidth(360), 360);
     assert.equal(clampColumnWidth(10), COLUMN_MIN);
     assert.equal(clampColumnWidth(4000), COLUMN_MAX);
+    assert.equal(COLUMN_PDF_DEFAULT, 720);
+    assert.equal(COLUMN_MAX, 2800);
     assert.equal(defaultColumnWidth(0, true), COLUMN_PDF_DEFAULT);
     assert.equal(defaultColumnWidth(1, false), COLUMN_DEFAULT);
+  });
+
+  it("lets the host column fill leftover space until a width is stored", () => {
+    assert.deepEqual(columnSize(undefined, 0, true), { flex: "1 1 auto", width: "auto" });
+    assert.deepEqual(columnSize(undefined, 0, false), { flex: "1 1 auto", width: "auto" });
+    assert.deepEqual(columnSize(undefined, 1, false), {
+      flex: `0 0 ${COLUMN_DEFAULT}px`,
+      width: `${COLUMN_DEFAULT}px`,
+    });
+    assert.deepEqual(columnSize(640, 0, true), { flex: "0 0 640px", width: "640px" });
+    assert.deepEqual(columnSize(1200, 0, true), { flex: "0 0 1200px", width: "1200px" });
+    assert.equal(clampColumnWidth(1200), 1200);
   });
 
   it("round-trips a stored layout and ignores junk", () => {

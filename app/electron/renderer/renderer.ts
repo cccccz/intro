@@ -7,10 +7,11 @@ import {
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
 import {
+  COLUMN_MIN,
   bindVSplitter,
   clampColumnWidth,
   clampSidebarWidth,
-  defaultColumnWidth,
+  columnSize,
   loadChromeLayout,
   saveChromeLayout,
   type ChromeLayout,
@@ -225,6 +226,7 @@ const chromeLayout: ChromeLayout = loadChromeLayout(localStorage);
 let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
+let pendingPdfPage: { nodeId: string; page: number } | null = null;
 
 function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
@@ -278,22 +280,26 @@ function applySidebarWidth(width: number): void {
 }
 
 function applyColumnWidth(section: HTMLElement, depth: number, pdfHost: boolean): void {
-  const key = String(depth);
-  const width = chromeLayout.columnWidths[key] ?? defaultColumnWidth(depth, pdfHost);
-  section.style.flex = `0 0 ${width}px`;
-  section.style.width = `${width}px`;
+  const size = columnSize(chromeLayout.columnWidths[String(depth)], depth, pdfHost);
+  section.style.flex = size.flex;
+  section.style.width = size.width;
+  section.style.minWidth = `${COLUMN_MIN}px`;
   section.style.maxWidth = "none";
 }
 
 function insertColumnSplitters(): void {
   const cols = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
-  for (let i = 0; i < cols.length - 1; i++) {
+  // After every column, including the last, so a lone PDF/host pane can be enlarged.
+  for (let i = 0; i < cols.length; i++) {
     const left = cols[i]!;
     const split = document.createElement("div");
     split.className = "splitter v-split";
     split.setAttribute("role", "separator");
     split.setAttribute("aria-orientation", "vertical");
-    split.setAttribute("aria-label", "Resize column");
+    split.setAttribute(
+      "aria-label",
+      left.classList.contains("pdf-host") ? "Resize PDF column" : "Resize column",
+    );
     bindVSplitter(split, {
       getWidth: () => left.getBoundingClientRect().width,
       setWidth: (width) => {
@@ -869,7 +875,8 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
 function appendRivetButtons(
   rivetsEl: HTMLElement,
   node: OpenNode,
-  items: { id: string; to?: string | null; label: string }[],
+  items: { id: string; to?: string | null; label: string; page?: number }[],
+  onJump?: (rivetId: string, page?: number) => void,
 ): void {
   const openIds = new Set(openRivetIds(state.nodes, node.id));
   for (const rivet of items) {
@@ -877,6 +884,9 @@ function appendRivetButtons(
     btn.type = "button";
     btn.className = "rivet";
     btn.dataset.rivet = rivet.id;
+    if (rivet.page != null) {
+      btn.dataset.page = String(rivet.page);
+    }
     btn.classList.toggle("open", openIds.has(rivet.id));
     const quote = document.createElement("span");
     quote.className = "quote";
@@ -885,12 +895,14 @@ function appendRivetButtons(
     to.className = "muted rivet-to";
     if (rivet.to) {
       to.dataset.to = rivet.to;
-      to.textContent = `→ ${titleOf(rivet.to)}`;
+      to.textContent = rivet.page != null
+        ? `p${rivet.page} → ${titleOf(rivet.to)}`
+        : `→ ${titleOf(rivet.to)}`;
     } else {
-      to.textContent = "(no side)";
+      to.textContent = rivet.page != null ? `p${rivet.page}` : "(no side)";
     }
     btn.append(quote, to);
-    btn.disabled = !rivet.to;
+    btn.disabled = !rivet.to && onJump == null;
     btn.addEventListener("pointerenter", () => {
       setHot(rivet.id);
     });
@@ -898,6 +910,7 @@ function appendRivetButtons(
       setHot(null);
     });
     btn.addEventListener("click", () => {
+      onJump?.(rivet.id, rivet.page);
       if (rivet.to) {
         void openSideColumn(node.id, rivet.to, rivet.id);
       }
@@ -951,21 +964,49 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   pageOf.textContent = " / ?";
   pageLabel.append(pageInput, pageOf);
   const outline = document.createElement("details");
-  outline.className = "pdf-outline";
+  outline.className = "pdf-outline pdf-menu";
   const outlineSummary = document.createElement("summary");
   outlineSummary.textContent = "Outline";
   const outlineNav = document.createElement("nav");
   outline.append(outlineSummary, outlineNav);
-  chrome.append(zoomOutBtn, zoomLabel, zoomInBtn, fitBtn, pageLabel, outline);
 
-  const tools = document.createElement("div");
-  tools.className = "column-tools";
-  const hint = document.createElement("span");
-  hint.className = "muted";
-  hint.textContent = "Drag a region, then New side. Overlay only — PDF bytes stay untouched.";
+  const overlayCount = view?.overlayRivets.length ?? 0;
+  const rivetMenu = document.createElement("details");
+  rivetMenu.className = "pdf-menu pdf-rivets-menu";
+  const rivetSummary = document.createElement("summary");
+  rivetSummary.textContent = `Rivets (${overlayCount})`;
+  rivetSummary.title = "Overlay rivets — jump to a region or open its side";
+  const rivetNav = document.createElement("nav");
+  rivetNav.setAttribute("aria-label", "Overlay rivets");
+  if (!view || overlayCount === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted empty-rivets";
+    empty.textContent = "No overlay rivets yet. Drag a region, then New side.";
+    rivetNav.append(empty);
+  } else {
+    appendRivetButtons(
+      rivetNav,
+      node,
+      view.overlayRivets.map((rivet) => ({
+        id: rivet.id,
+        to: rivet.to,
+        label: overlayQuote(rivet),
+        page: rivet.anchors[0]?.page,
+      })),
+      (_id, page) => {
+        if (page != null) {
+          pendingPdfPage = { nodeId: node.id, page };
+          pdfViews.get(node.id)?.gotoPage(page);
+        }
+      },
+    );
+  }
+  rivetMenu.append(rivetSummary, rivetNav);
+
   const newSide = document.createElement("button");
   newSide.type = "button";
   newSide.textContent = "New side";
+  newSide.title = "Drag a region, then New side. Overlay only — PDF bytes stay untouched.";
   newSide.addEventListener("click", () => {
     void hangFromPdf(node.id, undefined);
   });
@@ -984,26 +1025,34 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     }
     void hangFromPdf(node.id, sideId.trim());
   });
-  tools.append(hint, newSide, hangExisting);
 
-  const rivets = document.createElement("div");
-  rivets.className = "rivets";
-  const h = document.createElement("h3");
-  h.textContent = `Overlay rivets (${view?.overlayRivets.length ?? 0})`;
-  rivets.append(h);
-  if (view) {
-    appendRivetButtons(
-      rivets,
-      node,
-      view.overlayRivets.map((rivet) => ({
-        id: rivet.id,
-        to: rivet.to,
-        label: overlayQuote(rivet),
-      })),
-    );
+  const exclusiveMenus = [outline, rivetMenu];
+  for (const menu of exclusiveMenus) {
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) {
+        return;
+      }
+      for (const other of exclusiveMenus) {
+        if (other !== menu) {
+          other.open = false;
+        }
+      }
+    });
   }
 
-  surface.append(chrome, body, tools, rivets);
+  chrome.append(
+    zoomOutBtn,
+    zoomLabel,
+    zoomInBtn,
+    fitBtn,
+    pageLabel,
+    outline,
+    rivetMenu,
+    newSide,
+    hangExisting,
+  );
+
+  surface.append(chrome, body);
 
   const paintOutline = (items: PdfOutlineEntry[], parent: HTMLElement, goto: (page: number) => void): void => {
     const ul = document.createElement("ul");
@@ -1067,6 +1116,10 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     });
     pdfViews.get(node.id)?.destroy();
     pdfViews.set(node.id, handle);
+    if (pendingPdfPage?.nodeId === node.id) {
+      handle.gotoPage(pendingPdfPage.page);
+      pendingPdfPage = null;
+    }
     zoomLabel.textContent = formatZoom(handle.getZoom());
     pageInput.max = String(handle.numPages());
     pageInput.value = String(handle.currentPage());
