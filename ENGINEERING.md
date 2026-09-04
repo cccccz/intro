@@ -8,7 +8,7 @@
 
 ## 当前成功标准
 
-笔者能在本地走完一条端到端探究链。读者侧导出与对外传播往后放。
+笔者能在本地从空库走完 M1 写回路：建篇 → 写干净正文 → 划选写入铆点 → 打开侧边 → 再挂一层。读者侧导出与对外传播往后放。
 
 ## 目录
 
@@ -24,7 +24,7 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 测试
 
-现阶段只测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）以及库文件读写。不做 UI snapshot，也不做 E2E。
+现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写，以及无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂）。不做 UI snapshot，也不做 Electron E2E。
 
 标记语法见 [`app/marks/SYNTAX.md`](app/marks/SYNTAX.md)。根目录跑 `npm test`（`node:test`，不动 mockup 的 `tsc`）。
 
@@ -43,7 +43,7 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 ## 阶段
 
 - P0：文档
-- P1：`app/` 里的标记与库（本轮）
-- P2：M1 Electron 写回路
+- P1：`app/` 里的标记与库
+- P2：M1 Electron 写回路（本轮）
 - P3：视口与置顶
 - P4+：以后再说

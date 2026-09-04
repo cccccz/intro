@@ -70,4 +70,15 @@ describe("library on disk", () => {
     assert.match(piece.id, /^[0-9A-HJKMNP-TV-Z]{26}$/);
     assert.ok(lib.resolve(piece.id));
   });
+
+  it("lists piece ids without reading bodies", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "b", body: "keep-out-of-list-io" });
+    lib.createPiece({ id: "a", dir: "drafts", body: "also" });
+    assert.deepEqual(
+      lib.list().map((p) => p.id),
+      ["a", "b"],
+    );
+    assert.ok(lib.list()[0].path.includes(`${path.sep}drafts${path.sep}`));
+  });
 });

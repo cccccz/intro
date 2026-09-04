@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>intro</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <strong>intro</strong>
+    <span id="lib-path" class="muted">No library open</span>
+    <button type="button" id="btn-open">Open library</button>
+    <button type="button" id="btn-new-piece" disabled>New piece</button>
+  </header>
+  <div id="workspace">
+    <aside id="sidebar">
+      <h2>Pieces</h2>
+      <ul id="piece-list"></ul>
+      <p id="sidebar-empty" class="muted">Open a folder to start. An empty folder is a new library.</p>
+    </aside>
+    <main id="columns"></main>
+  </div>
+  <footer id="status" class="muted">Open a library, create a first piece, write text, select a span, hang a side.</footer>
+  <script type="module" src="./renderer.js"></script>
+</body>
+</html>

@@ -103,4 +103,11 @@ export class Library {
     fs.writeFileSync(filePath, body, "utf8");
     return { id, path: filePath, body };
   }
+
+  /** Piece ids and paths. Does not read bodies. */
+  list(): { id: string; path: string }[] {
+    return [...indexPieces(this.root).entries()]
+      .map(([id, filePath]) => ({ id, path: filePath }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
 }
