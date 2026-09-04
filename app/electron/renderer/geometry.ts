@@ -33,15 +33,31 @@ export function attachPoint(rects: readonly AnchorRect[]): { x: number; y: numbe
   return { x: last.right, y: (last.top + last.bottom) / 2 };
 }
 
+type RectBox = {
+  getClientRects: () => ArrayLike<{
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  }>;
+};
+
+/** First node that actually paints boxes (skip display:none source/rendered twin). */
+export function firstPaintedRects(nodes: Iterable<RectBox>): AnchorRect[] {
+  for (const node of nodes) {
+    const rects = Array.from(node.getClientRects(), clientToAnchor);
+    if (rects.length > 0) {
+      return rects;
+    }
+  }
+  return [];
+}
+
 /**
  * rivetId → rect list for the current host surface.
  * Textarea/HTML marks are the first provider; a later PDF host can implement
  * the same function from page geometry without changing wire/viewport code.
  */
 export function rectsForRivet(host: ParentNode, rivetId: string): AnchorRect[] {
-  const node = host.querySelector(`[data-rivet="${CSS.escape(rivetId)}"]`);
-  if (!node) {
-    return [];
-  }
-  return Array.from(node.getClientRects()).map(clientToAnchor);
+  return firstPaintedRects(host.querySelectorAll(`[data-rivet="${CSS.escape(rivetId)}"]`));
 }

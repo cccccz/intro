@@ -5,7 +5,7 @@ export type RivetRange = {
   end: number;
 };
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -16,13 +16,14 @@ function escapeHtml(text: string): string {
 type Event = { pos: number; kind: "start" | "end"; rivet: RivetRange };
 
 /**
- * Textarea/HTML geometry provider: paint `[data-rivet]` from clean ranges.
- * View only — offsets come from parsed marks; nothing here is written back.
+ * Wrap clean ranges in `[data-rivet]` marks. `formatText` sees each unmarked
+ * slice (source view escapes only; rendered view can markup). View-layer only.
  */
-export function highlightHtml(
+export function wrapRivets(
   clean: string,
   rivets: readonly RivetRange[],
-  openIds: readonly string[] = [],
+  openIds: readonly string[],
+  formatText: (text: string) => string,
 ): string {
   const events: Event[] = [];
   for (const rivet of rivets) {
@@ -48,7 +49,7 @@ export function highlightHtml(
   let cursor = 0;
   for (const ev of events) {
     if (ev.pos > cursor) {
-      html += escapeHtml(clean.slice(cursor, ev.pos));
+      html += formatText(clean.slice(cursor, ev.pos));
       cursor = ev.pos;
     }
     if (ev.kind === "start") {
@@ -59,8 +60,20 @@ export function highlightHtml(
     }
   }
   if (cursor < clean.length) {
-    html += escapeHtml(clean.slice(cursor));
+    html += formatText(clean.slice(cursor));
   }
+  return html;
+}
+
+/**
+ * Textarea/HTML geometry provider: paint `[data-rivet]` from clean ranges.
+ * View only — offsets come from parsed marks; nothing here is written back.
+ */
+export function highlightHtml(
+  clean: string,
+  rivets: readonly RivetRange[],
+  openIds: readonly string[] = [],
+): string {
   // Textareas keep a trailing line box; the mirror needs the same extra break.
-  return `${html}\n`;
+  return `${wrapRivets(clean, rivets, openIds, escapeHtml)}\n`;
 }
