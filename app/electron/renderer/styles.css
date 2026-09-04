@@ -222,15 +222,95 @@ button:disabled { opacity: 0.4; cursor: default; }
   color: var(--muted);
 }
 
-.column.stack .editor-stack {
+.column.stack .card-body {
   flex: none;
   height: 200px;
 }
 
-.editor-stack {
+.card-body {
   position: relative;
   flex: 1;
   min-height: 160px;
+}
+
+.editor-stack {
+  position: absolute;
+  inset: 0;
+}
+
+.mode-switch {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mode-switch button {
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+  padding: 4px 8px;
+}
+
+.mode-switch button:last-child { border-right: 0; }
+
+.mode-switch button.on {
+  background: #eff6ff;
+  color: var(--accent);
+}
+
+.body-rendered {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 12px;
+  font: 15px/1.5 ui-serif, "Iwanami Mincho", "Source Serif 4", "Songti SC", serif;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.body-source[hidden],
+.body-rendered[hidden] { display: none !important; }
+
+.body-rendered mark {
+  background: var(--mark);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.body-rendered mark.open { background: var(--mark-open); }
+
+.body-rendered mark.hot {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.body-rendered .h1 { font-size: 1.25em; }
+.body-rendered .h2 { font-size: 1.1em; }
+.body-rendered .h3 { font-size: 1em; }
+
+.body-rendered .li::before {
+  content: "• ";
+  color: var(--muted);
+}
+
+.body-rendered code {
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #f4f4f5;
+  padding: 0 0.25em;
+  border-radius: 3px;
+}
+
+.body-rendered .tex {
+  font-style: italic;
+}
+
+.body-rendered .tex.display,
+.body-rendered .katex-display {
+  display: block;
+  margin: 0.4em 0;
+  text-align: center;
 }
 
 .editor-highlights,

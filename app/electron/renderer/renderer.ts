@@ -6,6 +6,7 @@ import {
   type AnchorRect,
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
+import { katexMath, renderHtml } from "./render.ts";
 
 type Damage = { kind: string; message: string; index: number; id?: string };
 type RivetSpec = { id: string; to?: string | null; start: number; end: number };
@@ -131,11 +132,15 @@ declare global {
   }
 }
 
+type BodyMode = "source" | "rendered";
+
 type State = {
   root: string | null;
   pieces: { id: string; path: string }[];
   nodes: OpenNode[];
   views: Record<string, PieceDto>;
+  /** Per open card. Source is the write surface; rendered is read-only. */
+  modes: Record<string, BodyMode>;
 };
 
 const state: State = {
@@ -143,6 +148,7 @@ const state: State = {
   pieces: [],
   nodes: [],
   views: {},
+  modes: {},
 };
 
 const el = {
@@ -175,9 +181,15 @@ function quoteOf(clean: string, start: number, end: number): string {
   return `${slice.slice(0, 24)}…`;
 }
 
+function modeOf(nodeId: string): BodyMode {
+  return state.modes[nodeId] ?? "source";
+}
+
 function clipOf(surface: HTMLElement): AnchorRect {
-  const stack = surface.querySelector(".editor-stack") ?? surface;
-  return clientToAnchor(stack.getBoundingClientRect());
+  const rendered = surface.querySelector(".body-rendered") as HTMLElement | null;
+  const source = surface.querySelector(".body-source") as HTMLElement | null;
+  const box = rendered && !rendered.hidden ? rendered : source ?? surface;
+  return clientToAnchor(box.getBoundingClientRect());
 }
 
 function visibleRects(host: HTMLElement, rivetId: string): AnchorRect[] {
@@ -203,6 +215,23 @@ function syncHighlightScroll(editor: HTMLTextAreaElement, highlights: HTMLElemen
   highlights.scrollLeft = editor.scrollLeft;
 }
 
+function paintRendered(surface: HTMLElement): void {
+  const nodeId = surface.dataset.nodeId;
+  const pieceId = surface.dataset.pieceId;
+  const pane = surface.querySelector(".body-rendered") as HTMLElement | null;
+  const editor = surface.querySelector("textarea.editor") as HTMLTextAreaElement | null;
+  if (!nodeId || !pieceId || !pane || !editor) {
+    return;
+  }
+  const view = state.views[pieceId];
+  pane.innerHTML = renderHtml(
+    editor.value,
+    view?.rivets ?? [],
+    openRivetIds(state.nodes, nodeId),
+    katexMath,
+  );
+}
+
 function paintSurface(surface: HTMLElement): void {
   const nodeId = surface.dataset.nodeId;
   const pieceId = surface.dataset.pieceId;
@@ -217,6 +246,37 @@ function paintSurface(surface: HTMLElement): void {
   }
   paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetIds(state.nodes, nodeId));
   syncHighlightScroll(editor, highlights);
+  if (modeOf(nodeId) === "rendered") {
+    paintRendered(surface);
+  }
+}
+
+function applyMode(surface: HTMLElement, mode: BodyMode): void {
+  const nodeId = surface.dataset.nodeId;
+  if (nodeId) {
+    state.modes[nodeId] = mode;
+  }
+  surface.dataset.mode = mode;
+  const source = surface.querySelector(".body-source") as HTMLElement | null;
+  const rendered = surface.querySelector(".body-rendered") as HTMLElement | null;
+  if (source) {
+    source.hidden = mode !== "source";
+  }
+  if (rendered) {
+    rendered.hidden = mode !== "rendered";
+  }
+  surface.querySelectorAll(".mode-switch button").forEach((btn) => {
+    const on = (btn as HTMLElement).dataset.mode === mode;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  if (mode === "rendered") {
+    paintRendered(surface);
+  }
+  if (hotId) {
+    setHot(hotId);
+  }
+  scheduleChrome();
 }
 
 function rivetStart(parent: OpenNode | undefined, via: string | null): number {
@@ -403,6 +463,12 @@ function renderSidebar(): void {
 }
 
 function renderColumns(): void {
+  const keep = new Set(state.nodes.map((n) => n.id));
+  for (const id of Object.keys(state.modes)) {
+    if (!keep.has(id)) {
+      delete state.modes[id];
+    }
+  }
   el.columns.replaceChildren();
   if (state.nodes.length === 0) {
     const hint = document.createElement("p");
@@ -434,8 +500,11 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
     surface.dataset.via = node.viaRivetId;
   }
 
+  const body = document.createElement("div");
+  body.className = "card-body";
+
   const stack = document.createElement("div");
-  stack.className = "editor-stack";
+  stack.className = "body-source editor-stack";
   const highlights = document.createElement("div");
   highlights.className = "editor-highlights";
   highlights.setAttribute("aria-hidden", "true");
@@ -465,13 +534,44 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   });
   stack.append(highlights, editor);
 
+  const rendered = document.createElement("div");
+  rendered.className = "body-rendered";
+  rendered.hidden = true;
+  rendered.addEventListener("scroll", scheduleChrome);
+
+  body.append(stack, rendered);
+
   const tools = document.createElement("div");
   tools.className = "column-tools";
+  const modes = document.createElement("div");
+  modes.className = "mode-switch";
+  modes.setAttribute("role", "tablist");
+  modes.setAttribute("aria-label", "Body view");
+  for (const mode of ["source", "rendered"] as const) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.mode = mode;
+    btn.setAttribute("role", "tab");
+    btn.textContent = mode === "source" ? "Source" : "Rendered";
+    btn.addEventListener("click", () => {
+      applyMode(surface, mode);
+      if (mode === "source") {
+        editor.focus();
+      }
+    });
+    modes.append(btn);
+  }
   const newSide = document.createElement("button");
   newSide.type = "button";
   newSide.textContent = "New side";
   newSide.disabled = Boolean(view && view.damage.length > 0);
   newSide.addEventListener("click", () => {
+    if (modeOf(node.id) === "rendered") {
+      applyMode(surface, "source");
+      editor.focus();
+      setStatus("Select a span in source, then New side.");
+      return;
+    }
     void hangFromEditor(node.id, editor, undefined);
   });
   const hangExisting = document.createElement("button");
@@ -479,6 +579,12 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   hangExisting.textContent = "Hang existing…";
   hangExisting.disabled = Boolean(view && view.damage.length > 0);
   hangExisting.addEventListener("click", () => {
+    if (modeOf(node.id) === "rendered") {
+      applyMode(surface, "source");
+      editor.focus();
+      setStatus("Select a span in source, then hang an existing piece.");
+      return;
+    }
     const sideId = window.prompt(
       "Piece id to reuse as the side (to=)",
       state.pieces.find((p) => p.id !== node.pieceId)?.id ?? "",
@@ -488,7 +594,7 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
     }
     void hangFromEditor(node.id, editor, sideId.trim());
   });
-  tools.append(newSide, hangExisting);
+  tools.append(modes, newSide, hangExisting);
 
   const rivets = document.createElement("div");
   rivets.className = "rivets";
@@ -528,7 +634,8 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
     }
   }
 
-  surface.append(stack, tools, rivets);
+  surface.append(body, tools, rivets);
+  applyMode(surface, modeOf(node.id));
   return editor;
 }
 
@@ -756,6 +863,7 @@ el.open.addEventListener("click", async () => {
   applyLibrary(result.library);
   state.nodes = [];
   state.views = {};
+  state.modes = {};
   renderColumns();
   setStatus(`Library ${result.library.root}`);
 });

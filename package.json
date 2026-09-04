@@ -5,11 +5,14 @@
   "main": "app/dist/electron/main.js",
   "scripts": {
     "mockup": "tsc -p mockup/tsconfig.json",
-    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test app/marks/marks.test.ts app/library/library.test.ts app/write/loop.test.ts app/electron/renderer/highlight.test.ts app/electron/renderer/geometry.test.ts",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test app/marks/marks.test.ts app/library/library.test.ts app/write/loop.test.ts app/electron/renderer/highlight.test.ts app/electron/renderer/geometry.test.ts app/electron/renderer/render.test.ts",
     "typecheck:app": "tsc -p app/tsconfig.json && tsc -p app/electron/renderer/tsconfig.json --noEmit",
     "build:app": "tsc -p app/tsconfig.build.json && tsc -p app/electron/renderer/tsconfig.json && node app/electron/copy-static.mjs",
     "app": "npm run build:app && electron .",
     "electron:dev": "npm run build:app && electron ."
+  },
+  "dependencies": {
+    "katex": "^0.16.11"
   },
   "devDependencies": {
     "@types/node": "^22.13.14",
