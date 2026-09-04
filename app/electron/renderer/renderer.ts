@@ -286,7 +286,8 @@ function syncViewportSides(): void {
       continue;
     }
     const host = surfaceOf(node.parentId);
-    const parentHidden = Boolean(host && (host.hidden || host.closest(".card")?.hidden));
+    const parentCard = host?.closest(".card") as HTMLElement | null;
+    const parentHidden = Boolean(host && (host.hidden || parentCard?.hidden));
     card.hidden = parentHidden || !host || visibleRects(host, node.viaRivetId).length === 0;
   }
   for (const column of el.columns.querySelectorAll(":scope > .column.stack")) {
