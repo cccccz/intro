@@ -47,32 +47,80 @@ type IntroApi = {
 };
 
 /** Keep in sync with app/write/session.ts (inlined so file:// loads one script). */
-type Column = {
+const ROOT_ID = "root";
+
+type OpenNode = {
+  id: string;
   pieceId: string;
   viaRivetId: string | null;
+  parentId: string | null;
+  depth: number;
 };
 
-function openRoot(pieceId: string): Column[] {
-  return [{ pieceId, viaRivetId: null }];
+function openRoot(pieceId: string): OpenNode[] {
+  return [{ id: ROOT_ID, pieceId, viaRivetId: null, parentId: null, depth: 0 }];
 }
 
-function pushSide(
-  columns: readonly Column[],
-  hostIndex: number,
+function openSide(
+  nodes: readonly OpenNode[],
+  parentId: string,
   pieceId: string,
   viaRivetId: string,
-): Column[] {
-  if (hostIndex < 0 || hostIndex >= columns.length) {
-    throw new Error("host column out of range");
+): OpenNode[] {
+  const parent = nodes.find((n) => n.id === parentId);
+  if (!parent) {
+    throw new Error("parent not open");
   }
-  return [...columns.slice(0, hostIndex + 1), { pieceId, viaRivetId }];
+  if (nodes.some((n) => n.parentId === parentId && n.viaRivetId === viaRivetId)) {
+    return [...nodes];
+  }
+  return [
+    ...nodes,
+    {
+      id: viaRivetId,
+      pieceId,
+      viaRivetId,
+      parentId,
+      depth: parent.depth + 1,
+    },
+  ];
 }
 
-function closeAt(columns: readonly Column[], index: number): Column[] {
-  if (index <= 0) {
+function closeNode(nodes: readonly OpenNode[], id: string): OpenNode[] {
+  const target = nodes.find((n) => n.id === id);
+  if (!target || target.depth === 0) {
     return [];
   }
-  return columns.slice(0, index);
+  const drop = new Set<string>([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const node of nodes) {
+      if (node.parentId && drop.has(node.parentId) && !drop.has(node.id)) {
+        drop.add(node.id);
+        grew = true;
+      }
+    }
+  }
+  return nodes.filter((n) => !drop.has(n.id));
+}
+
+function nodesAtDepth(nodes: readonly OpenNode[], depth: number): OpenNode[] {
+  return nodes.filter((n) => n.depth === depth);
+}
+
+function childrenOf(nodes: readonly OpenNode[], parentId: string): OpenNode[] {
+  return nodes.filter((n) => n.parentId === parentId);
+}
+
+function openRivetIds(nodes: readonly OpenNode[], parentId: string): string[] {
+  return childrenOf(nodes, parentId)
+    .map((n) => n.viaRivetId)
+    .filter((id): id is string => id !== null);
+}
+
+function maxDepth(nodes: readonly OpenNode[]): number {
+  return nodes.reduce((max, n) => Math.max(max, n.depth), 0);
 }
 
 declare global {
@@ -86,14 +134,14 @@ declare global {
 type State = {
   root: string | null;
   pieces: { id: string; path: string }[];
-  columns: Column[];
+  nodes: OpenNode[];
   views: Record<string, PieceDto>;
 };
 
 const state: State = {
   root: null,
   pieces: [],
-  columns: [],
+  nodes: [],
   views: {},
 };
 
@@ -112,6 +160,7 @@ const el = {
 const persistTimers = new Map<string, number>();
 let hotId: string | null = null;
 let wireFrame = 0;
+let pendingAlign: string | null = null;
 
 function setStatus(text: string, danger = false): void {
   el.status.textContent = text;
@@ -126,12 +175,8 @@ function quoteOf(clean: string, start: number, end: number): string {
   return `${slice.slice(0, 24)}…`;
 }
 
-function openRivetAt(hostIndex: number): string | null {
-  return state.columns[hostIndex + 1]?.viaRivetId ?? null;
-}
-
-function clipOf(column: HTMLElement): AnchorRect {
-  const stack = column.querySelector(".editor-stack") ?? column;
+function clipOf(surface: HTMLElement): AnchorRect {
+  const stack = surface.querySelector(".editor-stack") ?? surface;
   return clientToAnchor(stack.getBoundingClientRect());
 }
 
@@ -140,13 +185,17 @@ function visibleRects(host: HTMLElement, rivetId: string): AnchorRect[] {
   return rectsForRivet(host, rivetId).filter((box) => rectsIntersect(box, clip));
 }
 
+function surfaceOf(nodeId: string): HTMLElement | null {
+  return el.columns.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+}
+
 function paintHighlights(
   highlights: HTMLElement,
   clean: string,
   rivets: readonly RivetSpec[],
-  openId: string | null,
+  openIds: readonly string[],
 ): void {
-  highlights.innerHTML = highlightHtml(clean, rivets, openId);
+  highlights.innerHTML = highlightHtml(clean, rivets, openIds);
 }
 
 function syncHighlightScroll(editor: HTMLTextAreaElement, highlights: HTMLElement): void {
@@ -154,20 +203,56 @@ function syncHighlightScroll(editor: HTMLTextAreaElement, highlights: HTMLElemen
   highlights.scrollLeft = editor.scrollLeft;
 }
 
-function paintColumn(column: HTMLElement): void {
-  const index = Number(column.dataset.depth);
-  const pieceId = column.dataset.pieceId;
-  if (!pieceId) {
+function paintSurface(surface: HTMLElement): void {
+  const nodeId = surface.dataset.nodeId;
+  const pieceId = surface.dataset.pieceId;
+  if (!nodeId || !pieceId) {
     return;
   }
   const view = state.views[pieceId];
-  const editor = column.querySelector("textarea.editor") as HTMLTextAreaElement | null;
-  const highlights = column.querySelector(".editor-highlights") as HTMLElement | null;
+  const editor = surface.querySelector("textarea.editor") as HTMLTextAreaElement | null;
+  const highlights = surface.querySelector(".editor-highlights") as HTMLElement | null;
   if (!editor || !highlights) {
     return;
   }
-  paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetAt(index));
+  paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetIds(state.nodes, nodeId));
   syncHighlightScroll(editor, highlights);
+}
+
+function rivetStart(parent: OpenNode | undefined, via: string | null): number {
+  if (!parent || !via) {
+    return 0;
+  }
+  return state.views[parent.pieceId]?.rivets.find((r) => r.id === via)?.start ?? 0;
+}
+
+function sortCards(a: OpenNode, b: OpenNode): number {
+  const pa = state.nodes.find((n) => n.id === a.parentId);
+  const pb = state.nodes.find((n) => n.id === b.parentId);
+  const sa = rivetStart(pa, a.viaRivetId);
+  const sb = rivetStart(pb, b.viaRivetId);
+  if (sa !== sb) {
+    return sa - sb;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function sortStacks(): void {
+  for (const stack of el.columns.querySelectorAll(".col-stack")) {
+    const cards = Array.from(stack.querySelectorAll(":scope > .card")) as HTMLElement[];
+    cards.sort((a, b) => {
+      const na = state.nodes.find((n) => n.id === a.dataset.nodeId);
+      const nb = state.nodes.find((n) => n.id === b.dataset.nodeId);
+      const ha = na?.parentId ? surfaceOf(na.parentId) : null;
+      const hb = nb?.parentId ? surfaceOf(nb.parentId) : null;
+      const ya = ha && na?.viaRivetId ? (rectsForRivet(ha, na.viaRivetId)[0]?.top ?? 0) : 0;
+      const yb = hb && nb?.viaRivetId ? (rectsForRivet(hb, nb.viaRivetId)[0]?.top ?? 0) : 0;
+      return ya - yb;
+    });
+    for (const card of cards) {
+      stack.append(card);
+    }
+  }
 }
 
 function scheduleChrome(): void {
@@ -176,31 +261,59 @@ function scheduleChrome(): void {
   }
   wireFrame = requestAnimationFrame(() => {
     wireFrame = 0;
+    sortStacks();
     syncViewportSides();
+    if (pendingAlign) {
+      alignCard(pendingAlign);
+      pendingAlign = null;
+    }
     drawWires();
   });
 }
 
 /** 结论 #36: source out of column view → don’t paint that side. Not a close. */
 function syncViewportSides(): void {
-  const columns = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
-  let hideFrom = columns.length;
-  for (let i = 1; i < columns.length; i++) {
-    const via = state.columns[i]?.viaRivetId;
-    const host = columns[i - 1];
-    if (!via || !host || visibleRects(host, via).length === 0) {
-      hideFrom = i;
-      break;
-    }
-  }
-  columns.forEach((column, i) => {
-    column.hidden = i >= hideFrom;
+  const cards = Array.from(el.columns.querySelectorAll(".card")) as HTMLElement[];
+  cards.sort((a, b) => {
+    const da = Number(a.dataset.depth ?? 0);
+    const db = Number(b.dataset.depth ?? 0);
+    return da - db;
   });
+  for (const card of cards) {
+    const node = state.nodes.find((n) => n.id === card.dataset.nodeId);
+    if (!node?.parentId || !node.viaRivetId) {
+      card.hidden = true;
+      continue;
+    }
+    const host = surfaceOf(node.parentId);
+    const parentHidden = Boolean(host && (host.hidden || host.closest(".card")?.hidden));
+    card.hidden = parentHidden || !host || visibleRects(host, node.viaRivetId).length === 0;
+  }
+  for (const column of el.columns.querySelectorAll(":scope > .column.stack")) {
+    const depthCards = column.querySelectorAll(":scope .card");
+    const any = Array.from(depthCards).some((card) => !(card as HTMLElement).hidden);
+    (column as HTMLElement).hidden = depthCards.length > 0 && !any;
+  }
+}
+
+function alignCard(nodeId: string): void {
+  const node = state.nodes.find((n) => n.id === nodeId);
+  const card = surfaceOf(nodeId);
+  if (!node?.parentId || !node.viaRivetId || !card || card.hidden) {
+    return;
+  }
+  const host = surfaceOf(node.parentId);
+  const box = host ? visibleRects(host, node.viaRivetId)[0] : undefined;
+  const stack = card.closest(".col-stack");
+  if (!box || !stack) {
+    return;
+  }
+  stack.scrollTop += box.top - card.getBoundingClientRect().top;
 }
 
 function setHot(id: string | null): void {
   hotId = id;
-  el.columns.querySelectorAll("mark.hot, .rivet.hot").forEach((node) => {
+  el.columns.querySelectorAll("mark.hot, .rivet.hot, .card.hot").forEach((node) => {
     node.classList.remove("hot");
   });
   if (id) {
@@ -210,11 +323,14 @@ function setHot(id: string | null): void {
     el.columns.querySelectorAll(`.rivet[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
       node.classList.add("hot");
     });
+    el.columns.querySelectorAll(`.card[data-node-id="${CSS.escape(id)}"]`).forEach((node) => {
+      node.classList.add("hot");
+    });
   }
   drawWires();
 }
 
-/** Open rivet ↔ opened side column only. Not a knowledge graph. */
+/** Open rivet ↔ opened side card only. Not a knowledge graph. */
 function drawWires(): void {
   const svg = el.wires;
   const board = el.board;
@@ -222,15 +338,16 @@ function drawWires(): void {
   const boardBox = clientToAnchor(br);
   svg.setAttribute("viewBox", `0 0 ${Math.max(0, br.width)} ${Math.max(0, br.height)}`);
   svg.replaceChildren();
-  const columns = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
-  for (let i = 1; i < state.columns.length; i++) {
-    const via = state.columns[i]?.viaRivetId;
-    const host = columns[i - 1];
-    const side = columns[i];
-    if (!via || !host || !side || side.hidden) {
+  for (const node of state.nodes) {
+    if (!node.parentId || !node.viaRivetId) {
       continue;
     }
-    const from = attachPoint(visibleRects(host, via));
+    const host = surfaceOf(node.parentId);
+    const side = surfaceOf(node.id);
+    if (!host || !side || side.hidden) {
+      continue;
+    }
+    const from = attachPoint(visibleRects(host, node.viaRivetId));
     if (!from || !rectsIntersect(clientToAnchor(side.getBoundingClientRect()), boardBox)) {
       continue;
     }
@@ -245,8 +362,8 @@ function drawWires(): void {
       "d",
       `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
     );
-    path.dataset.rivet = via;
-    if (via === hotId) {
+    path.dataset.rivet = node.viaRivetId;
+    if (node.viaRivetId === hotId || node.id === hotId) {
       path.classList.add("hot");
     }
     svg.appendChild(path);
@@ -268,7 +385,7 @@ function renderSidebar(): void {
   el.sidebarEmpty.textContent = state.root
     ? "Empty library. Create a first piece."
     : "Open a folder to start. An empty folder is a new library.";
-  const openIds = new Set(state.columns.map((c) => c.pieceId));
+  const openIds = new Set(state.nodes.map((n) => n.pieceId));
   for (const piece of state.pieces) {
     const li = document.createElement("li");
     const btn = document.createElement("button");
@@ -286,7 +403,7 @@ function renderSidebar(): void {
 
 function renderColumns(): void {
   el.columns.replaceChildren();
-  if (state.columns.length === 0) {
+  if (state.nodes.length === 0) {
     const hint = document.createElement("p");
     hint.className = "empty-main";
     hint.textContent = state.root
@@ -296,42 +413,25 @@ function renderColumns(): void {
     drawWires();
     return;
   }
-  state.columns.forEach((col, index) => {
-    el.columns.append(renderColumn(col, index));
-  });
+  const root = state.nodes.find((n) => n.depth === 0);
+  if (root) {
+    el.columns.append(renderHost(root));
+  }
+  const hi = maxDepth(state.nodes);
+  for (let depth = 1; depth <= hi; depth++) {
+    el.columns.append(renderSideColumn(depth));
+  }
   scheduleChrome();
 }
 
-function renderColumn(col: Column, index: number): HTMLElement {
-  const view = state.views[col.pieceId];
-  const section = document.createElement("section");
-  section.className = "column";
-  section.dataset.pieceId = col.pieceId;
-  section.dataset.depth = String(index);
-
-  const head = document.createElement("div");
-  head.className = "column-head";
-  const depth = document.createElement("span");
-  depth.className = "depth";
-  depth.textContent = `d${index}`;
-  const id = document.createElement("span");
-  id.className = "id";
-  id.textContent = col.pieceId;
-  id.title = view?.path ?? col.pieceId;
-  const close = document.createElement("button");
-  close.type = "button";
-  close.textContent = "Close";
-  close.addEventListener("click", () => {
-    state.columns = closeAt(state.columns, index);
-    renderSidebar();
-    renderColumns();
-    setStatus(
-      index === 0
-        ? "Closed the chain. Rivets stay on disk."
-        : "Closed this side and its subtree. Rivets stay on disk.",
-    );
-  });
-  head.append(depth, id, close);
+function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement {
+  const view = state.views[node.pieceId];
+  surface.dataset.nodeId = node.id;
+  surface.dataset.pieceId = node.pieceId;
+  surface.dataset.depth = String(node.depth);
+  if (node.viaRivetId) {
+    surface.dataset.via = node.viaRivetId;
+  }
 
   const stack = document.createElement("div");
   stack.className = "editor-stack";
@@ -346,23 +446,22 @@ function renderColumn(col: Column, index: number): HTMLElement {
   if (view && view.damage.length > 0) {
     editor.readOnly = true;
   }
-  paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetAt(index));
+  paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetIds(state.nodes, node.id));
   editor.addEventListener("input", () => {
     paintHighlights(
       highlights,
       editor.value,
-      state.views[col.pieceId]?.rivets ?? [],
-      openRivetAt(index),
+      state.views[node.pieceId]?.rivets ?? [],
+      openRivetIds(state.nodes, node.id),
     );
     syncHighlightScroll(editor, highlights);
-    schedulePersist(col.pieceId, editor);
+    schedulePersist(node.pieceId, editor);
     scheduleChrome();
   });
   editor.addEventListener("scroll", () => {
     syncHighlightScroll(editor, highlights);
     scheduleChrome();
   });
-
   stack.append(highlights, editor);
 
   const tools = document.createElement("div");
@@ -372,7 +471,7 @@ function renderColumn(col: Column, index: number): HTMLElement {
   newSide.textContent = "New side";
   newSide.disabled = Boolean(view && view.damage.length > 0);
   newSide.addEventListener("click", () => {
-    void hangFromEditor(index, editor, undefined);
+    void hangFromEditor(node.id, editor, undefined);
   });
   const hangExisting = document.createElement("button");
   hangExisting.type = "button";
@@ -381,12 +480,12 @@ function renderColumn(col: Column, index: number): HTMLElement {
   hangExisting.addEventListener("click", () => {
     const sideId = window.prompt(
       "Piece id to reuse as the side (to=)",
-      state.pieces.find((p) => p.id !== col.pieceId)?.id ?? "",
+      state.pieces.find((p) => p.id !== node.pieceId)?.id ?? "",
     );
     if (!sideId) {
       return;
     }
-    void hangFromEditor(index, editor, sideId.trim());
+    void hangFromEditor(node.id, editor, sideId.trim());
   });
   tools.append(newSide, hangExisting);
 
@@ -397,14 +496,14 @@ function renderColumn(col: Column, index: number): HTMLElement {
     ? `Damaged (${view.damage.map((d) => d.kind).join(", ")})`
     : `Rivets (${view?.rivets.length ?? 0})`;
   rivets.append(h);
-  const openId = openRivetAt(index);
+  const openIds = new Set(openRivetIds(state.nodes, node.id));
   if (view) {
     for (const rivet of view.rivets) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "rivet";
       btn.dataset.rivet = rivet.id;
-      btn.classList.toggle("open", rivet.id === openId);
+      btn.classList.toggle("open", openIds.has(rivet.id));
       const quote = document.createElement("span");
       quote.className = "quote";
       quote.textContent = `「${quoteOf(view.clean, rivet.start, rivet.end)}」`;
@@ -421,14 +520,111 @@ function renderColumn(col: Column, index: number): HTMLElement {
       });
       btn.addEventListener("click", () => {
         if (rivet.to) {
-          void openSideColumn(index, rivet.to, rivet.id);
+          void openSideColumn(node.id, rivet.to, rivet.id);
         }
       });
       rivets.append(btn);
     }
   }
 
-  section.append(head, stack, tools, rivets);
+  surface.append(stack, tools, rivets);
+  return editor;
+}
+
+function renderHost(node: OpenNode): HTMLElement {
+  const view = state.views[node.pieceId];
+  const section = document.createElement("section");
+  section.className = "column";
+  section.dataset.depth = "0";
+
+  const head = document.createElement("div");
+  head.className = "column-head";
+  const depth = document.createElement("span");
+  depth.className = "depth";
+  depth.textContent = "d0";
+  const id = document.createElement("span");
+  id.className = "id";
+  id.textContent = node.pieceId;
+  id.title = view?.path ?? node.pieceId;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "Close";
+  close.addEventListener("click", () => {
+    state.nodes = closeNode(state.nodes, ROOT_ID);
+    renderSidebar();
+    renderColumns();
+    setStatus("Closed the chain. Rivets stay on disk.");
+  });
+  head.append(depth, id, close);
+  section.append(head);
+  bindSurface(node, section);
+  return section;
+}
+
+function renderCard(node: OpenNode): HTMLElement {
+  const view = state.views[node.pieceId];
+  const parent = state.nodes.find((n) => n.id === node.parentId);
+  const card = document.createElement("article");
+  card.className = "card";
+
+  const head = document.createElement("div");
+  head.className = "card-hd";
+  const titles = document.createElement("div");
+  const id = document.createElement("strong");
+  id.className = "id";
+  id.textContent = node.pieceId;
+  id.title = view?.path ?? node.pieceId;
+  titles.append(id);
+  if (parent) {
+    const from = document.createElement("div");
+    from.className = "from";
+    from.textContent = `← ${parent.pieceId}`;
+    titles.append(from);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "Close";
+  close.addEventListener("click", () => {
+    state.nodes = closeNode(state.nodes, node.id);
+    renderSidebar();
+    renderColumns();
+    setStatus("Closed this side and its subtree. Rivets stay on disk.");
+  });
+  head.append(titles, close);
+  card.append(head);
+  bindSurface(node, card);
+  card.addEventListener("pointerenter", () => {
+    setHot(node.id);
+  });
+  card.addEventListener("pointerleave", () => {
+    setHot(null);
+  });
+  return card;
+}
+
+function renderSideColumn(depth: number): HTMLElement {
+  const cards = nodesAtDepth(state.nodes, depth).slice().sort(sortCards);
+  const section = document.createElement("section");
+  section.className = "column stack";
+  section.dataset.depth = String(depth);
+
+  const head = document.createElement("div");
+  head.className = "column-head";
+  const label = document.createElement("span");
+  label.className = "depth";
+  label.textContent = `d${depth}`;
+  const count = document.createElement("span");
+  count.className = "id";
+  count.textContent = cards.length === 1 ? "1 side" : `${cards.length} sides`;
+  head.append(label, count);
+
+  const stack = document.createElement("div");
+  stack.className = "col-stack";
+  stack.addEventListener("scroll", scheduleChrome);
+  for (const node of cards) {
+    stack.append(renderCard(node));
+  }
+  section.append(head, stack);
   return section;
 }
 
@@ -453,22 +649,24 @@ async function persistNow(id: string, clean: string): Promise<void> {
     return;
   }
   state.views[id] = result.piece;
-  const column = el.columns.querySelector(
-    `.column[data-piece-id="${CSS.escape(id)}"]`,
-  ) as HTMLElement | null;
-  if (column) {
-    paintColumn(column);
-  }
+  el.columns.querySelectorAll(`[data-piece-id="${CSS.escape(id)}"]`).forEach((node) => {
+    const surface = node as HTMLElement;
+    const editor = surface.querySelector("textarea.editor") as HTMLTextAreaElement | null;
+    if (editor && editor !== document.activeElement && editor.value !== result.piece.clean) {
+      editor.value = result.piece.clean;
+    }
+    paintSurface(surface);
+  });
   scheduleChrome();
   setStatus(`Saved ${id}`);
 }
 
 async function hangFromEditor(
-  hostIndex: number,
+  parentId: string,
   editor: HTMLTextAreaElement,
   sideId: string | undefined,
 ): Promise<void> {
-  const host = state.columns[hostIndex];
+  const host = state.nodes.find((n) => n.id === parentId);
   if (!host) {
     return;
   }
@@ -495,12 +693,15 @@ async function hangFromEditor(
   if (listed.ok) {
     state.pieces = listed.pieces;
   }
-  state.columns = pushSide(state.columns, hostIndex, result.side.id, result.rivetId);
+  state.nodes = openSide(state.nodes, parentId, result.side.id, result.rivetId);
+  pendingAlign = result.rivetId;
   renderSidebar();
   renderColumns();
-  const editors = el.columns.querySelectorAll("textarea.editor");
-  const focus = editors[hostIndex + 1] as HTMLTextAreaElement | undefined;
+  const focus = surfaceOf(result.rivetId)?.querySelector("textarea.editor") as
+    | HTMLTextAreaElement
+    | undefined;
   focus?.focus();
+  setHot(result.rivetId);
   setStatus(
     sideId
       ? `Hung existing ${result.side.id} from ${result.host.id}`
@@ -515,7 +716,7 @@ async function openRootPiece(id: string): Promise<void> {
     return;
   }
   state.views[id] = result.piece;
-  state.columns = openRoot(id);
+  state.nodes = openRoot(id);
   renderSidebar();
   renderColumns();
   const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
@@ -524,7 +725,7 @@ async function openRootPiece(id: string): Promise<void> {
 }
 
 async function openSideColumn(
-  hostIndex: number,
+  parentId: string,
   pieceId: string,
   rivetId: string,
 ): Promise<void> {
@@ -534,10 +735,13 @@ async function openSideColumn(
     return;
   }
   state.views[pieceId] = result.piece;
-  state.columns = pushSide(state.columns, hostIndex, pieceId, rivetId);
+  const already = state.nodes.some((n) => n.parentId === parentId && n.viaRivetId === rivetId);
+  state.nodes = openSide(state.nodes, parentId, pieceId, rivetId);
+  pendingAlign = rivetId;
   renderSidebar();
   renderColumns();
-  setStatus(`Opened side ${pieceId}`);
+  setHot(rivetId);
+  setStatus(already ? `Focused side ${pieceId}` : `Opened side ${pieceId}`);
 }
 
 el.open.addEventListener("click", async () => {
@@ -549,7 +753,7 @@ el.open.addEventListener("click", async () => {
     return;
   }
   applyLibrary(result.library);
-  state.columns = [];
+  state.nodes = [];
   state.views = {};
   renderColumns();
   setStatus(`Library ${result.library.root}`);
@@ -563,7 +767,7 @@ el.newPiece.addEventListener("click", async () => {
   }
   state.pieces = result.pieces;
   state.views[result.piece.id] = result.piece;
-  state.columns = openRoot(result.piece.id);
+  state.nodes = openRoot(result.piece.id);
   renderSidebar();
   renderColumns();
   const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;

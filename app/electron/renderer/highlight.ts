@@ -22,7 +22,7 @@ type Event = { pos: number; kind: "start" | "end"; rivet: RivetRange };
 export function highlightHtml(
   clean: string,
   rivets: readonly RivetRange[],
-  openId: string | null,
+  openIds: readonly string[] = [],
 ): string {
   const events: Event[] = [];
   for (const rivet of rivets) {
@@ -52,7 +52,7 @@ export function highlightHtml(
       cursor = ev.pos;
     }
     if (ev.kind === "start") {
-      const cls = ev.rivet.id === openId ? ' class="open"' : "";
+      const cls = openIds.includes(ev.rivet.id) ? ' class="open"' : "";
       html += `<mark data-rivet="${escapeHtml(ev.rivet.id)}"${cls}>`;
     } else {
       html += "</mark>";

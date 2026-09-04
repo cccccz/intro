@@ -6,7 +6,13 @@ import { afterEach, describe, it } from "node:test";
 import { parse, strip } from "../marks/index.ts";
 import { Library } from "../library/index.ts";
 import { hangSide, persistClean, pieceView } from "./loop.ts";
-import { closeAt, openRoot, pushSide } from "./session.ts";
+import {
+  ROOT_ID,
+  closeNode,
+  nodesAtDepth,
+  openRoot,
+  openSide,
+} from "./session.ts";
 
 const temps: string[] = [];
 
@@ -52,10 +58,10 @@ describe("M1 write loop on disk", () => {
     assert.equal(view.rivets[0].to, first.side.id);
 
     let columns = openRoot("host01");
-    columns = pushSide(columns, 0, first.side.id, first.rivetId);
-    columns = pushSide(columns, 1, nested.side.id, nested.rivetId);
+    columns = openSide(columns, ROOT_ID, first.side.id, first.rivetId);
+    columns = openSide(columns, first.rivetId, nested.side.id, nested.rivetId);
     assert.equal(columns.length, 3);
-    columns = closeAt(columns, 1);
+    columns = closeNode(columns, first.rivetId);
     assert.deepEqual(
       columns.map((c) => c.pieceId),
       ["host01"],
@@ -87,19 +93,57 @@ describe("M1 write loop on disk", () => {
     assert.equal(view.rivets[0].start, 0);
     assert.equal(view.rivets[0].end, 5);
   });
+
+  it("two host rivets stack at d1; hanging from one side opens d2", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "host01", body: "alpha beta" });
+    const a = hangSide(lib, "host01", { start: 0, end: 5 });
+    const b = hangSide(lib, "host01", { start: 6, end: 10 });
+    persistClean(lib, a.side.id, "from alpha");
+    const nested = hangSide(lib, a.side.id, { start: 0, end: 4 });
+    const host = parse(lib.load("host01").body);
+    assert.equal(host.rivets.length, 2);
+    let nodes = openRoot("host01");
+    nodes = openSide(nodes, ROOT_ID, a.side.id, a.rivetId);
+    nodes = openSide(nodes, ROOT_ID, b.side.id, b.rivetId);
+    nodes = openSide(nodes, a.rivetId, nested.side.id, nested.rivetId);
+    assert.equal(nodesAtDepth(nodes, 1).length, 2);
+    assert.deepEqual(
+      nodesAtDepth(nodes, 2).map((n) => n.pieceId),
+      [nested.side.id],
+    );
+  });
 });
 
-describe("column session", () => {
-  it("pushSide drops the deeper chain; closeAt keeps rivets off-screen", () => {
+describe("open session", () => {
+  it("stacks same-depth sides and opens the next depth from a side", () => {
     const root = openRoot("a");
-    const two = pushSide(root, 0, "b", "r1");
-    const three = pushSide(two, 1, "c", "r2");
-    const branch = pushSide(three, 0, "d", "r3");
+    const one = openSide(root, ROOT_ID, "b", "r1");
+    const stacked = openSide(one, ROOT_ID, "c", "r2");
     assert.deepEqual(
-      branch.map((c) => c.pieceId),
-      ["a", "d"],
+      stacked.map((n) => [n.pieceId, n.depth]),
+      [
+        ["a", 0],
+        ["b", 1],
+        ["c", 1],
+      ],
     );
-    assert.deepEqual(closeAt(three, 2).map((c) => c.pieceId), ["a", "b"]);
-    assert.deepEqual(closeAt(three, 0), []);
+    const nested = openSide(stacked, "r1", "d", "r3");
+    assert.equal(nodesAtDepth(nested, 1).length, 2);
+    assert.deepEqual(
+      nodesAtDepth(nested, 2).map((n) => n.pieceId),
+      ["d"],
+    );
+    assert.deepEqual(openSide(nested, "r1", "d", "r3").map((n) => n.id), nested.map((n) => n.id));
+  });
+
+  it("closeNode drops the subtree and leaves a same-layer sibling", () => {
+    const stacked = openSide(openSide(openRoot("a"), ROOT_ID, "b", "r1"), ROOT_ID, "c", "r2");
+    const nested = openSide(stacked, "r1", "d", "r3");
+    assert.deepEqual(
+      closeNode(nested, "r1").map((n) => n.pieceId),
+      ["a", "c"],
+    );
+    assert.deepEqual(closeNode(nested, ROOT_ID), []);
   });
 });
