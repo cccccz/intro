@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'" />
   <title>intro</title>
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="./vendor/katex.min.css" />
@@ -14,6 +14,7 @@
     <span id="lib-path" class="muted">No library open</span>
     <button type="button" id="btn-open">Open library</button>
     <button type="button" id="btn-new-piece" disabled>New piece</button>
+    <button type="button" id="btn-open-pdf" disabled>Open PDF…</button>
   </header>
   <div id="workspace">
     <aside id="sidebar">

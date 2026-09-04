@@ -55,8 +55,8 @@ export function firstPaintedRects(nodes: Iterable<RectBox>): AnchorRect[] {
 
 /**
  * rivetId → rect list for the current host surface.
- * Textarea/HTML marks are the first provider; a later PDF host can implement
- * the same function from page geometry without changing wire/viewport code.
+ * Text hosts paint `[data-rivet]` from textarea/HTML marks; PDF hosts paint
+ * overlay `[data-rivet]` from page+rect anchors. Wire/viewport code is shared.
  */
 export function rectsForRivet(host: ParentNode, rivetId: string): AnchorRect[] {
   return firstPaintedRects(host.querySelectorAll(`[data-rivet="${CSS.escape(rivetId)}"]`));

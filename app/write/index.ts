@@ -1,4 +1,4 @@
-export { hangSide, persistClean, pieceView } from "./loop.ts";
+export { hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
 export type { HangResult, PieceView } from "./loop.ts";
 export {
   ROOT_ID,

@@ -14,5 +14,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": []
   },
-  "include": ["./renderer.ts", "./highlight.ts", "./geometry.ts", "./render.ts"]
+  "include": ["./renderer.ts", "./highlight.ts", "./geometry.ts", "./render.ts", "./pdf-view.ts"]
 }
