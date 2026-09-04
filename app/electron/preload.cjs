@@ -8,6 +8,9 @@ const IPC = {
   loadPiece: "piece:load",
   persistClean: "piece:persistClean",
   hangSide: "piece:hangSide",
+  attachPdf: "piece:attachPdf",
+  readPdf: "piece:readPdf",
+  hangPdfSide: "piece:hangPdfSide",
 };
 
 contextBridge.exposeInMainWorld("intro", {
@@ -18,6 +21,9 @@ contextBridge.exposeInMainWorld("intro", {
   loadPiece: (id) => ipcRenderer.invoke(IPC.loadPiece, id),
   persistClean: (id, clean) => ipcRenderer.invoke(IPC.persistClean, id, clean),
   hangSide: (opts) => ipcRenderer.invoke(IPC.hangSide, opts),
+  attachPdf: () => ipcRenderer.invoke(IPC.attachPdf),
+  readPdf: (id) => ipcRenderer.invoke(IPC.readPdf, id),
+  hangPdfSide: (opts) => ipcRenderer.invoke(IPC.hangPdfSide, opts),
   onLibraryOpened: (cb) => {
     const listener = (_event, library) => cb(library);
     ipcRenderer.on("library:opened", listener);

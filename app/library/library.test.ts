@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { add, parse, strip } from "../marks/index.ts";
+import { HOST_EXT, OVERLAY_EXT, isPdfMagic, minimalPdf } from "../pdf/index.ts";
+import { OverlayError } from "../pdf/overlay.ts";
 import { Library } from "./library.ts";
 import { PIECE_EXT } from "./types.ts";
 
@@ -80,5 +82,35 @@ describe("library on disk", () => {
       ["a", "b"],
     );
     assert.ok(lib.list()[0].path.includes(`${path.sep}drafts${path.sep}`));
+  });
+});
+
+describe("PDF host on disk", () => {
+  it("copies a PDF and writes host + overlay sidecars, not an .intro.md body", () => {
+    const lib = tmpLibrary();
+    const src = path.join(lib.root, "_incoming.pdf");
+    const bytes = minimalPdf("sample host");
+    fs.writeFileSync(src, bytes);
+    const host = lib.attachPdf(src, { id: "host01" });
+    assert.equal(host.medium, "pdf");
+    assert.equal(host.body, "");
+    assert.equal(path.basename(host.path), `host01${HOST_EXT}`);
+    assert.equal(path.basename(host.pdfPath), "host01.pdf");
+    assert.equal(path.basename(host.overlayPath), `host01${OVERLAY_EXT}`);
+    assert.deepEqual(host.overlay.rivets, []);
+    assert.ok(isPdfMagic(fs.readFileSync(host.pdfPath)));
+    assert.equal(fs.readFileSync(host.pdfPath).equals(Buffer.from(bytes)), true);
+    assert.equal(lib.resolve("host01"), host.path);
+    assert.equal(lib.list().find((p) => p.id === "host01")?.medium, "pdf");
+    assert.equal(fs.existsSync(path.join(lib.root, "host01.intro.md")), false);
+  });
+
+  it("refuses to save text marks onto a PDF host", () => {
+    const lib = tmpLibrary();
+    const src = path.join(lib.root, "in.pdf");
+    fs.writeFileSync(src, minimalPdf());
+    lib.attachPdf(src, { id: "host01" });
+    assert.throws(() => lib.save("host01", "not a mark host"), OverlayError);
+    assert.ok(isPdfMagic(lib.readPdfBytes("host01")));
   });
 });

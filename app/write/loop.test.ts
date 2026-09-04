@@ -5,7 +5,8 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { parse, strip } from "../marks/index.ts";
 import { Library } from "../library/index.ts";
-import { hangSide, persistClean, pieceView } from "./loop.ts";
+import { hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
+import { HOST_EXT, OverlayError, isPdfMagic, minimalPdf } from "../pdf/index.ts";
 import {
   ROOT_ID,
   closeNode,
@@ -169,5 +170,71 @@ describe("open session", () => {
       ["a", "c"],
     );
     assert.deepEqual(closeNode(nested, ROOT_ID), []);
+  });
+});
+
+describe("PDF overlay hang", () => {
+  it("hangs a text side from page+rect without mutating the PDF", () => {
+    const lib = tmpLibrary();
+    const src = path.join(lib.root, "in.pdf");
+    const bytes = minimalPdf("do not write annots");
+    fs.writeFileSync(src, bytes);
+    const host = lib.attachPdf(src, { id: "pdf01" });
+    const before = Buffer.from(lib.readPdfBytes("pdf01"));
+
+    const hung = hangPdfSide(
+      lib,
+      "pdf01",
+      [{ page: 1, rect: { x: 72, y: 680, width: 180, height: 20 } }],
+      { quote: "intro PDF host" },
+    );
+    assert.equal(hung.host.medium, "pdf");
+    assert.equal(hung.side.medium, "text");
+    assert.match(hung.side.path, /\.intro\.md$/);
+    assert.equal(hung.side.body, "");
+    const overlay = hung.host.medium === "pdf" ? hung.host.overlay : null;
+    assert.equal(overlay?.rivets.length, 1);
+    assert.equal(overlay?.rivets[0].id, hung.rivetId);
+    assert.equal(overlay?.rivets[0].to, hung.side.id);
+    assert.equal(overlay?.rivets[0].anchors[0].page, 1);
+    assert.equal("start" in (overlay?.rivets[0] ?? {}), false);
+
+    assert.deepEqual(Buffer.from(lib.readPdfBytes("pdf01")), before);
+    assert.ok(isPdfMagic(lib.readPdfBytes("pdf01")));
+    assert.equal(fs.readFileSync(host.pdfPath).equals(bytes), true);
+    assert.doesNotMatch(fs.readFileSync(host.path, "utf8"), /<<r /);
+    assert.match(host.path, new RegExp(`${HOST_EXT.replace(".", "\\.")}$`));
+
+    persistClean(lib, hung.side.id, "side note on the region");
+    const nested = hangSide(lib, hung.side.id, { start: 0, end: 4 });
+    assert.match(lib.load(hung.side.id).body, /<<r id="/);
+    assert.equal(nested.side.medium, "text");
+
+    const view = pieceView(lib.load("pdf01"));
+    assert.equal(view.medium, "pdf");
+    assert.equal(view.clean, "");
+    assert.deepEqual(view.rivets, []);
+    assert.equal(view.overlayRivets[0].to, hung.side.id);
+
+    let nodes = openRoot("pdf01");
+    nodes = openSide(nodes, ROOT_ID, hung.side.id, hung.rivetId);
+    nodes = openSide(nodes, hung.rivetId, nested.side.id, nested.rivetId);
+    assert.equal(nodesAtDepth(nodes, 1).length, 1);
+    assert.equal(nodesAtDepth(nodes, 2)[0]?.pieceId, nested.side.id);
+  });
+
+  it("refuses text-offset hang/persist on a PDF host", () => {
+    const lib = tmpLibrary();
+    const src = path.join(lib.root, "in.pdf");
+    fs.writeFileSync(src, minimalPdf());
+    lib.attachPdf(src, { id: "pdf01" });
+    assert.throws(() => persistClean(lib, "pdf01", "nope"), OverlayError);
+    assert.throws(() => hangSide(lib, "pdf01", { start: 0, end: 1 }), OverlayError);
+    assert.throws(
+      () => hangPdfSide(lib, "pdf01", [{ page: 1, rect: { x: 0, y: 0, width: 1, height: 1 } }], {
+        sideId: "pdf01",
+      }),
+      OverlayError,
+    );
   });
 });

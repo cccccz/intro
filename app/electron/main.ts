@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Library } from "../library/index.ts";
-import { hangSide, persistClean, pieceView } from "../write/loop.ts";
+import { hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
+import type { PdfAnchor } from "../pdf/overlay.ts";
 import { IPC } from "./api.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -137,6 +138,61 @@ ipcMain.handle(
       }, {
         clean: opts.clean,
         sideId: opts.sideId,
+      });
+      return {
+        ok: true,
+        host: pieceView(result.host),
+        side: pieceView(result.side),
+        rivetId: result.rivetId,
+      };
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+ipcMain.handle(IPC.attachPdf, async () => {
+  try {
+    const picked = await dialog.showOpenDialog({
+      title: "Attach PDF as host",
+      properties: ["openFile"],
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (picked.canceled || !picked.filePaths[0]) {
+      return { ok: false, error: "canceled" };
+    }
+    const lib = requireLib();
+    const piece = lib.attachPdf(picked.filePaths[0]);
+    return { ok: true, piece: pieceView(piece), pieces: lib.list() };
+  } catch (err) {
+    return fail(err);
+  }
+});
+
+ipcMain.handle(IPC.readPdf, async (_e, id: string) => {
+  try {
+    const data = requireLib().readPdfBytes(id);
+    return { ok: true, data };
+  } catch (err) {
+    return fail(err);
+  }
+});
+
+ipcMain.handle(
+  IPC.hangPdfSide,
+  async (
+    _e,
+    opts: {
+      hostId: string;
+      anchors: PdfAnchor[];
+      sideId?: string;
+      quote?: string;
+    },
+  ) => {
+    try {
+      const result = hangPdfSide(requireLib(), opts.hostId, opts.anchors, {
+        sideId: opts.sideId,
+        quote: opts.quote,
       });
       return {
         ok: true,

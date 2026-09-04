@@ -6,6 +6,12 @@ import {
   type AnchorRect,
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
+import {
+  forgetAllPdfDocs,
+  mountPdfView,
+  type OverlayRivet,
+  type PdfViewHandle,
+} from "./pdf-view.ts";
 import { katexMath, renderHtml } from "./render.ts";
 
 type Damage = { kind: string; message: string; index: number; id?: string };
@@ -14,15 +20,19 @@ type RivetSpec = { id: string; to?: string | null; start: number; end: number };
 type PieceDto = {
   id: string;
   path: string;
+  medium: "text" | "pdf";
   body: string;
   clean: string;
   rivets: RivetSpec[];
+  overlayRivets: OverlayRivet[];
   damage: Damage[];
+  pdfPath?: string;
+  sourceName?: string;
 };
 
 type LibraryDto = {
   root: string;
-  pieces: { id: string; path: string }[];
+  pieces: { id: string; path: string; medium: "text" | "pdf" }[];
 };
 
 type Ok<T> = { ok: true } & T;
@@ -31,11 +41,11 @@ type Err = { ok: false; error: string };
 type IntroApi = {
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
-  listPieces: () => Promise<Ok<{ pieces: { id: string; path: string }[] }> | Err>;
+  listPieces: () => Promise<Ok<{ pieces: LibraryDto["pieces"] }> | Err>;
   createPiece: (opts?: {
     id?: string;
     body?: string;
-  }) => Promise<Ok<{ piece: PieceDto; pieces: { id: string; path: string }[] }> | Err>;
+  }) => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
   loadPiece: (id: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   persistClean: (id: string, clean: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   hangSide: (opts: {
@@ -44,6 +54,14 @@ type IntroApi = {
     end: number;
     clean?: string;
     sideId?: string;
+  }) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
+  attachPdf: () => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
+  readPdf: (id: string) => Promise<Ok<{ data: Uint8Array }> | Err>;
+  hangPdfSide: (opts: {
+    hostId: string;
+    anchors: OverlayRivet["anchors"];
+    sideId?: string;
+    quote?: string;
   }) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
 };
 
@@ -136,7 +154,7 @@ type BodyMode = "source" | "rendered";
 
 type State = {
   root: string | null;
-  pieces: { id: string; path: string }[];
+  pieces: { id: string; path: string; medium: "text" | "pdf" }[];
   nodes: OpenNode[];
   views: Record<string, PieceDto>;
   /**
@@ -158,6 +176,7 @@ const el = {
   libPath: document.getElementById("lib-path") as HTMLElement,
   open: document.getElementById("btn-open") as HTMLButtonElement,
   newPiece: document.getElementById("btn-new-piece") as HTMLButtonElement,
+  openPdf: document.getElementById("btn-open-pdf") as HTMLButtonElement,
   list: document.getElementById("piece-list") as HTMLUListElement,
   sidebarEmpty: document.getElementById("sidebar-empty") as HTMLElement,
   board: document.getElementById("board") as HTMLElement,
@@ -167,6 +186,7 @@ const el = {
 };
 
 const persistTimers = new Map<string, number>();
+const pdfViews = new Map<string, PdfViewHandle>();
 let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
@@ -184,14 +204,28 @@ function quoteOf(clean: string, start: number, end: number): string {
   return `${slice.slice(0, 24)}…`;
 }
 
+function overlayQuote(rivet: OverlayRivet): string {
+  if (rivet.quote) {
+    const slice = rivet.quote.replace(/\s+/g, " ").trim();
+    return slice.length <= 24 ? slice || "region" : `${slice.slice(0, 24)}…`;
+  }
+  const first = rivet.anchors[0];
+  return first ? `p${first.page} region` : "region";
+}
+
 function modeOf(nodeId: string): BodyMode {
   return state.modes[nodeId] ?? "source";
 }
 
 function clipOf(surface: HTMLElement): AnchorRect {
+  const pdf = surface.querySelector(".body-pdf") as HTMLElement | null;
   const rendered = surface.querySelector(".body-rendered") as HTMLElement | null;
   const source = surface.querySelector(".body-source") as HTMLElement | null;
-  const box = rendered && !rendered.hidden ? rendered : source ?? surface;
+  const box = pdf && !pdf.hidden
+    ? pdf
+    : rendered && !rendered.hidden
+      ? rendered
+      : source ?? surface;
   return clientToAnchor(box.getBoundingClientRect());
 }
 
@@ -383,14 +417,11 @@ function alignCard(nodeId: string): void {
 
 function setHot(id: string | null): void {
   hotId = id;
-  el.columns.querySelectorAll("mark.hot, .rivet.hot, .card.hot").forEach((node) => {
+  el.columns.querySelectorAll("mark.hot, .rivet.hot, .card.hot, .pdf-hl.hot").forEach((node) => {
     node.classList.remove("hot");
   });
   if (id) {
-    el.columns.querySelectorAll(`mark[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
-      node.classList.add("hot");
-    });
-    el.columns.querySelectorAll(`.rivet[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
+    el.columns.querySelectorAll(`[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
       node.classList.add("hot");
     });
     el.columns.querySelectorAll(`.card[data-node-id="${CSS.escape(id)}"]`).forEach((node) => {
@@ -446,6 +477,7 @@ function applyLibrary(library: LibraryDto): void {
   el.libPath.textContent = library.root;
   el.libPath.title = library.root;
   el.newPiece.disabled = false;
+  el.openPdf.disabled = false;
   renderSidebar();
 }
 
@@ -461,6 +493,12 @@ function renderSidebar(): void {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = piece.id;
+    if (piece.medium === "pdf") {
+      const badge = document.createElement("span");
+      badge.className = "piece-pdf";
+      badge.textContent = "PDF";
+      btn.append(badge);
+    }
     btn.title = piece.path;
     btn.classList.toggle("on", openIds.has(piece.id));
     btn.addEventListener("click", () => {
@@ -471,8 +509,16 @@ function renderSidebar(): void {
   }
 }
 
+function disposePdfViews(): void {
+  for (const handle of pdfViews.values()) {
+    handle.destroy();
+  }
+  pdfViews.clear();
+}
+
 function renderColumns(): void {
   const keep = new Set(state.nodes.map((n) => n.id));
+  disposePdfViews();
   for (const id of Object.keys(state.modes)) {
     if (!keep.has(id)) {
       delete state.modes[id];
@@ -649,6 +695,133 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   return editor;
 }
 
+function appendRivetButtons(
+  rivetsEl: HTMLElement,
+  node: OpenNode,
+  items: { id: string; to?: string | null; label: string }[],
+): void {
+  const openIds = new Set(openRivetIds(state.nodes, node.id));
+  for (const rivet of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rivet";
+    btn.dataset.rivet = rivet.id;
+    btn.classList.toggle("open", openIds.has(rivet.id));
+    const quote = document.createElement("span");
+    quote.className = "quote";
+    quote.textContent = `「${rivet.label}」`;
+    const to = document.createElement("span");
+    to.className = "muted";
+    to.textContent = rivet.to ? `→ ${rivet.to}` : "(no side)";
+    btn.append(quote, to);
+    btn.disabled = !rivet.to;
+    btn.addEventListener("pointerenter", () => {
+      setHot(rivet.id);
+    });
+    btn.addEventListener("pointerleave", () => {
+      setHot(null);
+    });
+    btn.addEventListener("click", () => {
+      if (rivet.to) {
+        void openSideColumn(node.id, rivet.to, rivet.id);
+      }
+    });
+    rivetsEl.append(btn);
+  }
+}
+
+function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
+  const view = state.views[node.pieceId];
+  surface.dataset.nodeId = node.id;
+  surface.dataset.pieceId = node.pieceId;
+  surface.dataset.depth = String(node.depth);
+  surface.dataset.mode = "pdf";
+  surface.classList.add("pdf-host");
+  state.modes[node.id] = "source";
+
+  const body = document.createElement("div");
+  body.className = "card-body";
+  const pane = document.createElement("div");
+  pane.className = "body-pdf";
+  pane.addEventListener("scroll", scheduleChrome);
+  body.append(pane);
+
+  const tools = document.createElement("div");
+  tools.className = "column-tools";
+  const hint = document.createElement("span");
+  hint.className = "muted";
+  hint.textContent = "Drag a region, then New side. Overlay only — PDF bytes stay untouched.";
+  const newSide = document.createElement("button");
+  newSide.type = "button";
+  newSide.textContent = "New side";
+  newSide.addEventListener("click", () => {
+    void hangFromPdf(node.id, undefined);
+  });
+  const hangExisting = document.createElement("button");
+  hangExisting.type = "button";
+  hangExisting.textContent = "Hang existing…";
+  hangExisting.addEventListener("click", () => {
+    const sideId = window.prompt(
+      "Piece id to reuse as the side (to=)",
+      state.pieces.find((p) => p.id !== node.pieceId && p.medium === "text")?.id ?? "",
+    );
+    if (!sideId) {
+      return;
+    }
+    void hangFromPdf(node.id, sideId.trim());
+  });
+  tools.append(hint, newSide, hangExisting);
+
+  const rivets = document.createElement("div");
+  rivets.className = "rivets";
+  const h = document.createElement("h3");
+  h.textContent = `Overlay rivets (${view?.overlayRivets.length ?? 0})`;
+  rivets.append(h);
+  if (view) {
+    appendRivetButtons(
+      rivets,
+      node,
+      view.overlayRivets.map((rivet) => ({
+        id: rivet.id,
+        to: rivet.to,
+        label: overlayQuote(rivet),
+      })),
+    );
+  }
+
+  surface.append(body, tools, rivets);
+
+  void (async () => {
+    const result = await window.intro.readPdf(node.pieceId);
+    if (!result.ok) {
+      setStatus(result.error, true);
+      return;
+    }
+    if (surface.dataset.pieceId !== node.pieceId) {
+      return;
+    }
+    const handle = await mountPdfView({
+      root: pane,
+      pieceId: node.pieceId,
+      data: result.data,
+      rivets: view?.overlayRivets ?? [],
+      openIds: openRivetIds(state.nodes, node.id),
+      onChrome: scheduleChrome,
+      onRivetEnter: setHot,
+      onRivetLeave: () => setHot(null),
+      onRivetClick: (id) => {
+        const rivet = state.views[node.pieceId]?.overlayRivets.find((r) => r.id === id);
+        if (rivet?.to) {
+          void openSideColumn(node.id, rivet.to, rivet.id);
+        }
+      },
+    });
+    pdfViews.get(node.id)?.destroy();
+    pdfViews.set(node.id, handle);
+    scheduleChrome();
+  })();
+}
+
 function renderHost(node: OpenNode): HTMLElement {
   const view = state.views[node.pieceId];
   const section = document.createElement("section");
@@ -675,7 +848,11 @@ function renderHost(node: OpenNode): HTMLElement {
   });
   head.append(depth, id, close);
   section.append(head);
-  bindSurface(node, section);
+  if (view?.medium === "pdf") {
+    bindPdfHost(node, section);
+  } else {
+    bindSurface(node, section);
+  }
   return section;
 }
 
@@ -790,6 +967,48 @@ async function persistNow(id: string, clean: string): Promise<void> {
   setStatus(`Saved ${id}`);
 }
 
+async function hangFromPdf(parentId: string, sideId: string | undefined): Promise<void> {
+  const host = state.nodes.find((n) => n.id === parentId);
+  if (!host) {
+    return;
+  }
+  const view = pdfViews.get(parentId);
+  const selection = view?.getSelection();
+  if (!selection || selection.anchors.length === 0) {
+    setStatus("Drag a region on the PDF first.", true);
+    return;
+  }
+  const result = await window.intro.hangPdfSide({
+    hostId: host.pieceId,
+    anchors: selection.anchors,
+    sideId,
+  });
+  if (!result.ok) {
+    setStatus(result.error, true);
+    return;
+  }
+  state.views[result.host.id] = result.host;
+  state.views[result.side.id] = result.side;
+  const listed = await window.intro.listPieces();
+  if (listed.ok) {
+    state.pieces = listed.pieces;
+  }
+  state.nodes = openSide(state.nodes, parentId, result.side.id, result.rivetId);
+  pendingAlign = result.rivetId;
+  renderSidebar();
+  renderColumns();
+  const focus = surfaceOf(result.rivetId)?.querySelector("textarea.editor") as
+    | HTMLTextAreaElement
+    | undefined;
+  focus?.focus();
+  setHot(result.rivetId);
+  setStatus(
+    sideId
+      ? `Hung existing ${result.side.id} from PDF overlay ${result.rivetId}`
+      : `Created side ${result.side.id} from PDF overlay ${result.rivetId}`,
+  );
+}
+
 async function hangFromEditor(
   parentId: string,
   editor: HTMLTextAreaElement,
@@ -848,9 +1067,11 @@ async function openRootPiece(id: string): Promise<void> {
   state.nodes = openRoot(id);
   renderSidebar();
   renderColumns();
-  const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
-  editor?.focus();
-  setStatus(`Opened ${id}`);
+  if (result.piece.medium !== "pdf") {
+    const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
+    editor?.focus();
+  }
+  setStatus(result.piece.medium === "pdf" ? `Opened PDF host ${id}` : `Opened ${id}`);
 }
 
 async function openSideColumn(
@@ -885,8 +1106,25 @@ el.open.addEventListener("click", async () => {
   state.nodes = [];
   state.views = {};
   state.modes = {};
+  forgetAllPdfDocs();
   renderColumns();
   setStatus(`Library ${result.library.root}`);
+});
+
+el.openPdf.addEventListener("click", async () => {
+  const result = await window.intro.attachPdf();
+  if (!result.ok) {
+    if (result.error !== "canceled") {
+      setStatus(result.error, true);
+    }
+    return;
+  }
+  state.pieces = result.pieces;
+  state.views[result.piece.id] = result.piece;
+  state.nodes = openRoot(result.piece.id);
+  renderSidebar();
+  renderColumns();
+  setStatus(`Attached PDF host ${result.piece.id} (overlay sidecar; PDF not rewritten)`);
 });
 
 el.newPiece.addEventListener("click", async () => {
@@ -907,6 +1145,7 @@ el.newPiece.addEventListener("click", async () => {
 
 window.intro.onLibraryOpened((library) => {
   applyLibrary(library);
+  forgetAllPdfDocs();
   renderColumns();
   setStatus(`Library ${library.root}`);
 });

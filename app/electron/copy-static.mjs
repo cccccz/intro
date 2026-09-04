@@ -31,3 +31,12 @@ fs.copyFileSync(
   path.resolve(electronDir, "../../node_modules/markdown-it/dist/markdown-it.min.js"),
   path.join(vendorDest, "markdown-it.min.js"),
 );
+
+const pdfjsBuild = path.resolve(electronDir, "../../node_modules/pdfjs-dist/build");
+const pdfViewer = path.join(pdfjsBuild, "pdf.min.mjs");
+const pdfWorker = path.join(pdfjsBuild, "pdf.worker.min.mjs");
+if (!fs.existsSync(pdfViewer) || !fs.existsSync(pdfWorker)) {
+  throw new Error("pdfjs-dist build files missing; run npm install");
+}
+fs.copyFileSync(pdfViewer, path.join(vendorDest, "pdf.min.mjs"));
+fs.copyFileSync(pdfWorker, path.join(vendorDest, "pdf.worker.min.mjs"));
