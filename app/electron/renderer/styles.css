@@ -76,9 +76,27 @@ button:disabled { opacity: 0.4; cursor: default; }
   width: 200px;
   flex-shrink: 0;
   padding: 10px;
-  border-right: 1px solid var(--line);
+  border-right: 0;
   background: var(--paper);
   overflow: auto;
+}
+
+.splitter.v-split {
+  flex: 0 0 6px;
+  width: 6px;
+  align-self: stretch;
+  cursor: ew-resize;
+  background: var(--line);
+  z-index: 5;
+}
+
+.splitter.v-split:hover,
+.splitter.v-split.dragging {
+  background: #93c5fd;
+}
+
+#columns > .splitter.v-split {
+  flex: 0 0 6px;
 }
 
 #sidebar h2 {
@@ -96,11 +114,32 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 #piece-list button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
   width: 100%;
   text-align: left;
   margin-bottom: 4px;
+}
+
+#piece-list .piece-title {
+  flex: 1 1 100%;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#piece-list .piece-id {
+  display: block;
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #piece-list button.on {
@@ -154,9 +193,8 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 .column {
-  flex: 1 0 320px;
-  max-width: 480px;
-  min-width: 280px;
+  flex: 0 0 360px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
@@ -171,10 +209,24 @@ button:disabled { opacity: 0.4; cursor: default; }
   border-bottom: 1px solid var(--line);
 }
 
-.column-head .id {
+.column-head .head-titles {
   flex: 1;
+  min-width: 0;
+}
+
+.column-head .piece-title {
+  display: block;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-head .id,
+.card-hd .id {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 11px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -210,11 +262,9 @@ button:disabled { opacity: 0.4; cursor: default; }
   padding: 8px 10px 0;
 }
 
-.card-hd .id {
+.card-hd .piece-title {
   display: block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  color: var(--ink);
+  font-size: 14px;
 }
 
 .card-hd .from {
@@ -464,8 +514,90 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 .column.pdf-host {
-  max-width: 640px;
   flex-basis: 420px;
+}
+
+.pdf-chrome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #fafafa;
+}
+
+.pdf-zoom-label {
+  min-width: 3.2em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.pdf-page-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pdf-page-jump input {
+  width: 4.2em;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+.pdf-outline {
+  position: relative;
+}
+
+.pdf-outline summary {
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  background: var(--paper);
+}
+
+.pdf-outline[data-empty] summary {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pdf-outline nav {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 6;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.08);
+}
+
+.pdf-outline ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+}
+
+.pdf-outline > nav > ul { padding-left: 0; }
+
+.pdf-outline li { margin: 2px 0; }
+
+.pdf-outline button {
+  width: 100%;
+  text-align: left;
+  padding: 3px 6px;
 }
 
 .body-pdf {

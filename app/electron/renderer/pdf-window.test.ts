@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   PDF_OVERSCAN_PAGES,
+  currentPageFromScroll,
   expandPageWindow,
   intersectingPagesFromScroll,
   pageCountInRange,
@@ -71,6 +72,12 @@ describe("rasterWindowFromScroll", () => {
     const lastTop = pages.tops[19]!;
     const range = rasterWindowFromScroll(pages.tops, pages.heights, lastTop + 900, 400, 2);
     assert.deepEqual(range, { from: 18, to: 20 });
+  });
+
+  it("reports the first visible page for the jump control", () => {
+    assert.equal(currentPageFromScroll(pages.tops, pages.heights, 0, 600), 1);
+    assert.equal(currentPageFromScroll(pages.tops, pages.heights, 850, 200), 2);
+    assert.equal(currentPageFromScroll(pages.tops, pages.heights, pages.tops[19]! + 900, 400), 20);
   });
 
   it("does not raster the whole document when the viewport is small", () => {

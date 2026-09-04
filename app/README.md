@@ -27,13 +27,21 @@ npm run app -- --library /path/to/library
 ## M1 写回路（空库 → 嵌套铆点树）
 
 1. **Open library**：选一个本地文件夹。空文件夹就是新库。
-2. **New piece**：建第一篇 `{id}.intro.md`，出现在最左列。
+2. **New piece**：提示输入显示名，建第一篇 `{id}.intro.md`（id 仍是文件名主干）。列表和卡片上主标签是标题；id 只是小号/tooltip。**Rename** 只写 `{id}.intro.meta.json`，不改正文。
 3. 每列/每张卡片可切 **Source** 和 **Rendered**。Source 是这篇的权威面（做法 A：铆点标记在 `{id}.intro.md`）。屏幕上编辑的是清除后的干净正文（`$...$` 仍是源文）；`persistClean` / `addMark` 只走 Source，落盘仍带 `<<r>>` 标记，不写 HTML。Rendered 是同一篇的只读投影，不是第二份正文。顺序是 **先 parse/strip 铆点，再对干净正文做 markdown**（`**` / `#` 等不得拆 `<<r>>` 定界符）。子集：标题、列表、粗体/斜体、链接、行内代码、围栏代码、引用，以及 `$...$` / `$$...$$`（KaTeX）。不渲染原文 HTML 或图片。高亮与导线是视图像，不写入源文。
 4. **划选一段**，点 **New side**：用 `addMark` 往宿主写入 `<<r id="…" to="…">>…<</r id="…">>`，并新建一篇侧边，作为下一列打开。视图像标出该选区，并有导线连到打开的侧边卡片（几何不落盘）。Rendered 里点 New side 会回到 Source 再划。
 5. 在侧边里再划、再挂（d2）。列 = 深度；同一宿主上多个打开的铆点叠在该层 panel 里（多张卡片），不互相顶掉。高亮与导线随滚动/窗口缩放更新。源高亮滚出该列视口则不画对应侧边（不是合上）。
 6. **Hang existing…** 把选区挂到库里已有的一篇（复用）。点铆点条目则打开已挂的侧边；已打开的再点一次只对准该卡片。
 7. **Close** 只从画面拿掉该卡片及其子树；磁盘上的铆点和篇还在。合上宿主列则收起整条链。
-8. **Open PDF…**：把本地 PDF **复制**进库（不改原文件、也不往副本里写 Annot）。左列是 PDF.js 渲染（render-first）。在页上**拖出一块区域**，再 **New side**：侧边仍是 `{id}.intro.md`，可切 Source/Rendered、再划再挂（d2）。高亮和导线走同一套 `rivetId → rects`（overlay 画 `[data-rivet]`）。
+8. **Open PDF…**：把本地 PDF **复制**进库（不改原文件、也不往副本里写 Annot）。左列是 PDF.js 渲染（render-first）。默认标题是原文件名，可 **Rename**。在页上**拖出一块区域**，再 **New side**：侧边仍是 `{id}.intro.md`，可切 Source/Rendered、再划再挂（d2）。高亮和导线走同一套 `rivetId → rects`（overlay 画 `[data-rivet]`）。
+
+PDF 列顶栏：
+
+- **Zoom**：`−` / `+` 以「适宽」为 100% 加减（0.25×–4×）。**Fit width** 回到适宽。缩放会重算每页占位高度，只重新 raster 当前可见窗口（overscan 仍是 ±2）。
+- **Page**：输入页码回车，滚到该页占位并保证它进入 raster 窗口。
+- **Outline**：若 PDF 自带书签（`getOutline`），点条目跳到对应页；没有书签则显示 No outline。
+
+分栏：PIECES 与列之间、列与列之间可拖分割条。宽度记在 `localStorage`（`intro:chrome-layout:v1`），个人自用。
 
 三种看法、置顶带、导出不在本轮。PDF 文本层划词、摘录重挂、写回 PDF、扫描件 OCR 都还没做。
 
@@ -56,7 +64,7 @@ parse(marked).rivets;    // 嵌套树；damage 非空即损坏
 
 ## 库（一篇一个文件）
 
-文本篇 = 库目录下任意一层的 `{id}.intro.md`。id 即文件名主干；`to` 写篇 id，不写路径。
+文本篇 = 库目录下任意一层的 `{id}.intro.md`。id 即文件名主干；`to` 写篇 id，不写路径。显示名另存在同目录 `{id}.intro.meta.json`，不是 frontmatter，正文仍是标记 SoT。
 
 ```ts
 import { Library } from "./library/index.ts";
@@ -80,8 +88,12 @@ lib.attachPdf("/path/to/paper.pdf");
 {id}.intro.host.json     # medium=pdf, pdf="{id}.pdf", 可选 sourceName
 {id}.pdf                 # 附入时的字节副本；之后只读，不写 Annot
 {id}.intro.overlay.json  # rivet id → to + page + user-space rect（原点左下）
+{id}.intro.meta.json     # 可选显示名 { formatVersion, title }；缺省则用 sourceName
 {sideId}.intro.md        # 侧边，做法 A 文本标记
+{sideId}.intro.meta.json # 侧边显示名，同上
 ```
+
+选 sidecar 而不是 YAML frontmatter：正文扫描仍只看见 `<<r>>`，PDF 宿主也没有 `.intro.md` 可写 frontmatter。UI 不得把 UUID 当主标签。
 
 `overlay` 里的矩形是 PDF 用户空间的轴对齐框。若输入是 QuadPoints（8 个数一组），按四个顶点的 min/max 归一，不假设 Acrobat 与 ISO 顶点顺序一致，也不把选区当成 PDF 文件的字符串下标。
 

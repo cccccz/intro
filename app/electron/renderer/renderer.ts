@@ -7,9 +7,26 @@ import {
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
 import {
+  bindVSplitter,
+  clampColumnWidth,
+  clampSidebarWidth,
+  defaultColumnWidth,
+  loadChromeLayout,
+  saveChromeLayout,
+  type ChromeLayout,
+} from "./layout.ts";
+import {
+  ZOOM_FIT,
+  formatZoom,
+  parsePageInput,
+  zoomIn,
+  zoomOut,
+} from "./pdf-nav.ts";
+import {
   forgetAllPdfDocs,
   mountPdfView,
   type OverlayRivet,
+  type PdfOutlineEntry,
   type PdfViewHandle,
 } from "./pdf-view.ts";
 import { katexMath, renderHtml } from "./render.ts";
@@ -21,6 +38,7 @@ type PieceDto = {
   id: string;
   path: string;
   medium: "text" | "pdf";
+  title: string;
   body: string;
   clean: string;
   rivets: RivetSpec[];
@@ -30,9 +48,16 @@ type PieceDto = {
   sourceName?: string;
 };
 
+type ListedPieceDto = {
+  id: string;
+  path: string;
+  medium: "text" | "pdf";
+  title: string;
+};
+
 type LibraryDto = {
   root: string;
-  pieces: { id: string; path: string; medium: "text" | "pdf" }[];
+  pieces: ListedPieceDto[];
 };
 
 type Ok<T> = { ok: true } & T;
@@ -45,7 +70,12 @@ type IntroApi = {
   createPiece: (opts?: {
     id?: string;
     body?: string;
+    title?: string;
   }) => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
+  setPieceTitle: (
+    id: string,
+    title: string,
+  ) => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
   loadPiece: (id: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   persistClean: (id: string, clean: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   hangSide: (opts: {
@@ -154,7 +184,7 @@ type BodyMode = "source" | "rendered";
 
 type State = {
   root: string | null;
-  pieces: { id: string; path: string; medium: "text" | "pdf" }[];
+  pieces: ListedPieceDto[];
   nodes: OpenNode[];
   views: Record<string, PieceDto>;
   /**
@@ -177,6 +207,8 @@ const el = {
   open: document.getElementById("btn-open") as HTMLButtonElement,
   newPiece: document.getElementById("btn-new-piece") as HTMLButtonElement,
   openPdf: document.getElementById("btn-open-pdf") as HTMLButtonElement,
+  sidebar: document.getElementById("sidebar") as HTMLElement,
+  splitSidebar: document.getElementById("split-sidebar") as HTMLElement,
   list: document.getElementById("piece-list") as HTMLUListElement,
   sidebarEmpty: document.getElementById("sidebar-empty") as HTMLElement,
   board: document.getElementById("board") as HTMLElement,
@@ -187,9 +219,95 @@ const el = {
 
 const persistTimers = new Map<string, number>();
 const pdfViews = new Map<string, PdfViewHandle>();
+const chromeLayout: ChromeLayout = loadChromeLayout(localStorage);
 let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
+
+function titleOf(pieceId: string): string {
+  return state.views[pieceId]?.title
+    ?? state.pieces.find((p) => p.id === pieceId)?.title
+    ?? "Untitled";
+}
+
+function persistLayout(): void {
+  saveChromeLayout(localStorage, chromeLayout);
+}
+
+function applySidebarWidth(width: number): void {
+  chromeLayout.sidebarWidth = clampSidebarWidth(width);
+  el.sidebar.style.width = `${chromeLayout.sidebarWidth}px`;
+  persistLayout();
+  scheduleChrome();
+}
+
+function applyColumnWidth(section: HTMLElement, depth: number, pdfHost: boolean): void {
+  const key = String(depth);
+  const width = chromeLayout.columnWidths[key] ?? defaultColumnWidth(depth, pdfHost);
+  section.style.flex = `0 0 ${width}px`;
+  section.style.width = `${width}px`;
+  section.style.maxWidth = "none";
+}
+
+function insertColumnSplitters(): void {
+  const cols = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
+  for (let i = 0; i < cols.length - 1; i++) {
+    const left = cols[i]!;
+    const split = document.createElement("div");
+    split.className = "splitter v-split";
+    split.setAttribute("role", "separator");
+    split.setAttribute("aria-orientation", "vertical");
+    split.setAttribute("aria-label", "Resize column");
+    bindVSplitter(split, {
+      getWidth: () => left.getBoundingClientRect().width,
+      setWidth: (width) => {
+        left.style.flex = `0 0 ${width}px`;
+        left.style.width = `${width}px`;
+        chromeLayout.columnWidths[left.dataset.depth ?? String(i)] = width;
+        persistLayout();
+        scheduleChrome();
+      },
+      clamp: clampColumnWidth,
+    });
+    left.after(split);
+  }
+}
+
+async function renamePiece(id: string): Promise<void> {
+  const next = window.prompt("Display name (file id stays on disk)", titleOf(id));
+  if (next === null) {
+    return;
+  }
+  const result = await window.intro.setPieceTitle(id, next);
+  if (!result.ok) {
+    setStatus(result.error, true);
+    return;
+  }
+  state.views[id] = result.piece;
+  state.pieces = result.pieces;
+  renderSidebar();
+  paintTitles();
+  setStatus(`Title: ${result.piece.title}`);
+}
+
+function paintTitles(): void {
+  el.columns.querySelectorAll("[data-piece-id]").forEach((node) => {
+    const pieceId = (node as HTMLElement).dataset.pieceId;
+    if (!pieceId) {
+      return;
+    }
+    const title = titleOf(pieceId);
+    node.querySelectorAll(".piece-title").forEach((label) => {
+      label.textContent = title;
+    });
+  });
+  el.columns.querySelectorAll("[data-to]").forEach((node) => {
+    const to = (node as HTMLElement).dataset.to;
+    if (to) {
+      node.textContent = `→ ${titleOf(to)}`;
+    }
+  });
+}
 
 function setStatus(text: string, danger = false): void {
   el.status.textContent = text;
@@ -492,14 +610,21 @@ function renderSidebar(): void {
     const li = document.createElement("li");
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = piece.id;
+    const title = document.createElement("span");
+    title.className = "piece-title";
+    title.textContent = piece.title;
+    const id = document.createElement("span");
+    id.className = "piece-id";
+    id.textContent = piece.id;
+    btn.append(title);
     if (piece.medium === "pdf") {
       const badge = document.createElement("span");
       badge.className = "piece-pdf";
       badge.textContent = "PDF";
       btn.append(badge);
     }
-    btn.title = piece.path;
+    btn.append(id);
+    btn.title = `${piece.title}\n${piece.id}\n${piece.path}`;
     btn.classList.toggle("on", openIds.has(piece.id));
     btn.addEventListener("click", () => {
       void openRootPiece(piece.id);
@@ -543,6 +668,7 @@ function renderColumns(): void {
   for (let depth = 1; depth <= hi; depth++) {
     el.columns.append(renderSideColumn(depth));
   }
+  insertColumnSplitters();
   scheduleChrome();
 }
 
@@ -641,9 +767,11 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
       setStatus("Select a span in source, then hang an existing piece.");
       return;
     }
+    const listed = state.pieces.filter((p) => p.id !== node.pieceId);
+    const hintIds = listed.map((p) => `${p.title} (${p.id})`).slice(0, 8).join(", ");
     const sideId = window.prompt(
-      "Piece id to reuse as the side (to=)",
-      state.pieces.find((p) => p.id !== node.pieceId)?.id ?? "",
+      hintIds ? `Piece id to reuse as the side.\n${hintIds}` : "Piece id to reuse as the side (to=)",
+      listed[0]?.id ?? "",
     );
     if (!sideId) {
       return;
@@ -671,8 +799,13 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
       quote.className = "quote";
       quote.textContent = `「${quoteOf(view.clean, rivet.start, rivet.end)}」`;
       const to = document.createElement("span");
-      to.className = "muted";
-      to.textContent = rivet.to ? `→ ${rivet.to}` : "(no side)";
+      to.className = "muted rivet-to";
+      if (rivet.to) {
+        to.dataset.to = rivet.to;
+        to.textContent = `→ ${titleOf(rivet.to)}`;
+      } else {
+        to.textContent = "(no side)";
+      }
       btn.append(quote, to);
       btn.disabled = !rivet.to;
       btn.addEventListener("pointerenter", () => {
@@ -711,8 +844,13 @@ function appendRivetButtons(
     quote.className = "quote";
     quote.textContent = `「${rivet.label}」`;
     const to = document.createElement("span");
-    to.className = "muted";
-    to.textContent = rivet.to ? `→ ${rivet.to}` : "(no side)";
+    to.className = "muted rivet-to";
+    if (rivet.to) {
+      to.dataset.to = rivet.to;
+      to.textContent = `→ ${titleOf(rivet.to)}`;
+    } else {
+      to.textContent = "(no side)";
+    }
     btn.append(quote, to);
     btn.disabled = !rivet.to;
     btn.addEventListener("pointerenter", () => {
@@ -746,6 +884,42 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   pane.addEventListener("scroll", scheduleChrome);
   body.append(pane);
 
+  const chrome = document.createElement("div");
+  chrome.className = "pdf-chrome";
+  const zoomOutBtn = document.createElement("button");
+  zoomOutBtn.type = "button";
+  zoomOutBtn.textContent = "−";
+  zoomOutBtn.title = "Zoom out";
+  const zoomLabel = document.createElement("span");
+  zoomLabel.className = "pdf-zoom-label";
+  zoomLabel.textContent = formatZoom(ZOOM_FIT);
+  const zoomInBtn = document.createElement("button");
+  zoomInBtn.type = "button";
+  zoomInBtn.textContent = "+";
+  zoomInBtn.title = "Zoom in";
+  const fitBtn = document.createElement("button");
+  fitBtn.type = "button";
+  fitBtn.textContent = "Fit width";
+  const pageLabel = document.createElement("label");
+  pageLabel.className = "pdf-page-jump";
+  pageLabel.textContent = "Page ";
+  const pageInput = document.createElement("input");
+  pageInput.type = "number";
+  pageInput.min = "1";
+  pageInput.value = "1";
+  pageInput.title = "Jump to page";
+  const pageOf = document.createElement("span");
+  pageOf.className = "muted";
+  pageOf.textContent = " / ?";
+  pageLabel.append(pageInput, pageOf);
+  const outline = document.createElement("details");
+  outline.className = "pdf-outline";
+  const outlineSummary = document.createElement("summary");
+  outlineSummary.textContent = "Outline";
+  const outlineNav = document.createElement("nav");
+  outline.append(outlineSummary, outlineNav);
+  chrome.append(zoomOutBtn, zoomLabel, zoomInBtn, fitBtn, pageLabel, outline);
+
   const tools = document.createElement("div");
   tools.className = "column-tools";
   const hint = document.createElement("span");
@@ -761,9 +935,11 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   hangExisting.type = "button";
   hangExisting.textContent = "Hang existing…";
   hangExisting.addEventListener("click", () => {
+    const listed = state.pieces.filter((p) => p.id !== node.pieceId && p.medium === "text");
+    const hintIds = listed.map((p) => `${p.title} (${p.id})`).slice(0, 8).join(", ");
     const sideId = window.prompt(
-      "Piece id to reuse as the side (to=)",
-      state.pieces.find((p) => p.id !== node.pieceId && p.medium === "text")?.id ?? "",
+      hintIds ? `Piece id to reuse as the side.\n${hintIds}` : "Piece id to reuse as the side (to=)",
+      listed[0]?.id ?? "",
     );
     if (!sideId) {
       return;
@@ -789,7 +965,35 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     );
   }
 
-  surface.append(body, tools, rivets);
+  surface.append(chrome, body, tools, rivets);
+
+  const paintOutline = (items: PdfOutlineEntry[], parent: HTMLElement, goto: (page: number) => void): void => {
+    const ul = document.createElement("ul");
+    for (const item of items) {
+      const li = document.createElement("li");
+      if (item.page != null) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = item.title;
+        btn.title = `Page ${item.page}`;
+        const page = item.page;
+        btn.addEventListener("click", () => {
+          goto(page);
+        });
+        li.append(btn);
+      } else {
+        const span = document.createElement("span");
+        span.className = "muted";
+        span.textContent = item.title;
+        li.append(span);
+      }
+      if (item.children.length > 0) {
+        paintOutline(item.children, li, goto);
+      }
+      ul.append(li);
+    }
+    parent.append(ul);
+  };
 
   void (async () => {
     const result = await window.intro.readPdf(node.pieceId);
@@ -815,9 +1019,54 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
           void openSideColumn(node.id, rivet.to, rivet.id);
         }
       },
+      onPageChange: (page, numPages) => {
+        pageInput.max = String(numPages);
+        if (document.activeElement !== pageInput) {
+          pageInput.value = String(page);
+        }
+        pageOf.textContent = ` / ${numPages}`;
+      },
     });
     pdfViews.get(node.id)?.destroy();
     pdfViews.set(node.id, handle);
+    zoomLabel.textContent = formatZoom(handle.getZoom());
+    pageInput.max = String(handle.numPages());
+    pageInput.value = String(handle.currentPage());
+    pageOf.textContent = ` / ${handle.numPages()}`;
+    const applyZoom = async (next: number): Promise<void> => {
+      await handle.setZoom(next);
+      zoomLabel.textContent = formatZoom(handle.getZoom());
+      scheduleChrome();
+    };
+    zoomOutBtn.addEventListener("click", () => {
+      void applyZoom(zoomOut(handle.getZoom()));
+    });
+    zoomInBtn.addEventListener("click", () => {
+      void applyZoom(zoomIn(handle.getZoom()));
+    });
+    fitBtn.addEventListener("click", () => {
+      void applyZoom(ZOOM_FIT);
+    });
+    const jump = (): void => {
+      handle.gotoPage(parsePageInput(pageInput.value, handle.numPages()));
+    };
+    pageInput.addEventListener("change", jump);
+    pageInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        jump();
+      }
+    });
+    const items = await handle.getOutline();
+    outlineNav.replaceChildren();
+    if (items.length === 0) {
+      outlineSummary.textContent = "No outline";
+      outline.setAttribute("data-empty", "1");
+    } else {
+      outlineSummary.textContent = "Outline";
+      paintOutline(items, outlineNav, (page) => {
+        handle.gotoPage(page);
+      });
+    }
     scheduleChrome();
   })();
 }
@@ -827,16 +1076,31 @@ function renderHost(node: OpenNode): HTMLElement {
   const section = document.createElement("section");
   section.className = "column";
   section.dataset.depth = "0";
+  applyColumnWidth(section, 0, view?.medium === "pdf");
 
   const head = document.createElement("div");
   head.className = "column-head";
   const depth = document.createElement("span");
   depth.className = "depth";
   depth.textContent = "d0";
+  const titles = document.createElement("div");
+  titles.className = "head-titles";
+  const name = document.createElement("span");
+  name.className = "piece-title";
+  name.textContent = titleOf(node.pieceId);
+  name.title = view?.path ?? node.pieceId;
   const id = document.createElement("span");
-  id.className = "id";
+  id.className = "id piece-id";
   id.textContent = node.pieceId;
-  id.title = view?.path ?? node.pieceId;
+  id.title = node.pieceId;
+  titles.append(name, id);
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.textContent = "Rename";
+  rename.title = "Set display name. File id stays the same.";
+  rename.addEventListener("click", () => {
+    void renamePiece(node.pieceId);
+  });
   const close = document.createElement("button");
   close.type = "button";
   close.textContent = "Close";
@@ -846,7 +1110,7 @@ function renderHost(node: OpenNode): HTMLElement {
     renderColumns();
     setStatus("Closed the chain. Rivets stay on disk.");
   });
-  head.append(depth, id, close);
+  head.append(depth, titles, rename, close);
   section.append(head);
   if (view?.medium === "pdf") {
     bindPdfHost(node, section);
@@ -865,17 +1129,29 @@ function renderCard(node: OpenNode): HTMLElement {
   const head = document.createElement("div");
   head.className = "card-hd";
   const titles = document.createElement("div");
-  const id = document.createElement("strong");
-  id.className = "id";
+  titles.className = "head-titles";
+  const name = document.createElement("strong");
+  name.className = "piece-title";
+  name.textContent = titleOf(node.pieceId);
+  name.title = view?.path ?? node.pieceId;
+  const id = document.createElement("span");
+  id.className = "id piece-id";
   id.textContent = node.pieceId;
-  id.title = view?.path ?? node.pieceId;
-  titles.append(id);
+  id.title = node.pieceId;
+  titles.append(name, id);
   if (parent) {
     const from = document.createElement("div");
     from.className = "from";
-    from.textContent = `← ${parent.pieceId}`;
+    from.textContent = `← ${titleOf(parent.pieceId)}`;
     titles.append(from);
   }
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.textContent = "Rename";
+  rename.title = "Set display name. File id stays the same.";
+  rename.addEventListener("click", () => {
+    void renamePiece(node.pieceId);
+  });
   const close = document.createElement("button");
   close.type = "button";
   close.textContent = "Close";
@@ -885,7 +1161,7 @@ function renderCard(node: OpenNode): HTMLElement {
     renderColumns();
     setStatus("Closed this side and its subtree. Rivets stay on disk.");
   });
-  head.append(titles, close);
+  head.append(titles, rename, close);
   card.append(head);
   bindSurface(node, card);
   card.addEventListener("pointerenter", () => {
@@ -902,6 +1178,7 @@ function renderSideColumn(depth: number): HTMLElement {
   const section = document.createElement("section");
   section.className = "column stack";
   section.dataset.depth = String(depth);
+  applyColumnWidth(section, depth, false);
 
   const head = document.createElement("div");
   head.className = "column-head";
@@ -1071,7 +1348,11 @@ async function openRootPiece(id: string): Promise<void> {
     const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
     editor?.focus();
   }
-  setStatus(result.piece.medium === "pdf" ? `Opened PDF host ${id}` : `Opened ${id}`);
+  setStatus(
+    result.piece.medium === "pdf"
+      ? `Opened PDF host ${result.piece.title}`
+      : `Opened ${result.piece.title}`,
+  );
 }
 
 async function openSideColumn(
@@ -1091,7 +1372,7 @@ async function openSideColumn(
   renderSidebar();
   renderColumns();
   setHot(rivetId);
-  setStatus(already ? `Focused side ${pieceId}` : `Opened side ${pieceId}`);
+  setStatus(already ? `Focused side ${result.piece.title}` : `Opened side ${result.piece.title}`);
 }
 
 el.open.addEventListener("click", async () => {
@@ -1124,11 +1405,15 @@ el.openPdf.addEventListener("click", async () => {
   state.nodes = openRoot(result.piece.id);
   renderSidebar();
   renderColumns();
-  setStatus(`Attached PDF host ${result.piece.id} (overlay sidecar; PDF not rewritten)`);
+  setStatus(`Attached PDF host ${result.piece.title} (overlay sidecar; PDF not rewritten)`);
 });
 
 el.newPiece.addEventListener("click", async () => {
-  const result = await window.intro.createPiece({ body: "" });
+  const title = window.prompt("Title for this piece", "Untitled");
+  if (title === null) {
+    return;
+  }
+  const result = await window.intro.createPiece({ body: "", title });
   if (!result.ok) {
     setStatus(result.error, true);
     return;
@@ -1140,7 +1425,7 @@ el.newPiece.addEventListener("click", async () => {
   renderColumns();
   const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
   editor?.focus();
-  setStatus(`Created ${result.piece.id}`);
+  setStatus(`Created ${result.piece.title}`);
 });
 
 window.intro.onLibraryOpened((library) => {
@@ -1153,6 +1438,13 @@ window.intro.onLibraryOpened((library) => {
 el.columns.addEventListener("scroll", scheduleChrome);
 window.addEventListener("resize", scheduleChrome);
 new ResizeObserver(scheduleChrome).observe(el.board);
+
+bindVSplitter(el.splitSidebar, {
+  getWidth: () => el.sidebar.getBoundingClientRect().width,
+  setWidth: applySidebarWidth,
+  clamp: clampSidebarWidth,
+});
+applySidebarWidth(chromeLayout.sidebarWidth);
 
 renderSidebar();
 renderColumns();

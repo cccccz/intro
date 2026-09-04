@@ -17,6 +17,15 @@ import {
   serializeOverlay,
   type PdfOverlay,
 } from "../pdf/overlay.ts";
+import {
+  displayTitle,
+  emptyMeta,
+  META_EXT,
+  META_FORMAT_VERSION,
+  parseMeta,
+  serializeMeta,
+  type PieceMeta,
+} from "./meta.ts";
 import { PIECE_EXT, type ListedPiece, type PdfPiece, type Piece, type TextPiece } from "./types.ts";
 
 const SKIP_DIRS = new Set([".git", "node_modules"]);
@@ -84,6 +93,22 @@ function indexPieces(root: string): Map<string, PieceIndexEntry> {
   return map;
 }
 
+function metaPathFor(id: string, piecePath: string): string {
+  return path.join(path.dirname(piecePath), `${id}${META_EXT}`);
+}
+
+function readMeta(id: string, piecePath: string): PieceMeta {
+  const file = metaPathFor(id, piecePath);
+  if (!fs.existsSync(file)) {
+    return emptyMeta();
+  }
+  return parseMeta(fs.readFileSync(file, "utf8"));
+}
+
+function writeMeta(id: string, piecePath: string, meta: PieceMeta): void {
+  fs.writeFileSync(metaPathFor(id, piecePath), serializeMeta(meta), "utf8");
+}
+
 function loadPdfPiece(id: string, hostPath: string): PdfPiece {
   const meta = parseHostMeta(fs.readFileSync(hostPath, "utf8"));
   if (meta.id !== id) {
@@ -99,6 +124,7 @@ function loadPdfPiece(id: string, hostPath: string): PdfPiece {
   if (fs.existsSync(overlayPath)) {
     overlay = parseOverlay(fs.readFileSync(overlayPath, "utf8"));
   }
+  const display = readMeta(id, hostPath);
   return {
     id,
     path: hostPath,
@@ -107,6 +133,7 @@ function loadPdfPiece(id: string, hostPath: string): PdfPiece {
     pdfPath,
     overlay,
     overlayPath,
+    title: displayTitle({ title: display.title, sourceName: meta.sourceName, medium: "pdf" }),
     ...(meta.sourceName ? { sourceName: meta.sourceName } : {}),
   };
 }
@@ -134,7 +161,7 @@ export class Library {
     return indexPieces(this.root).get(id) ?? null;
   }
 
-  createPiece(opts?: { id?: string; body?: string; dir?: string }): TextPiece {
+  createPiece(opts?: { id?: string; body?: string; dir?: string; title?: string }): TextPiece {
     const id = opts?.id ?? ulid();
     if (!isPieceId(id)) {
       throw new Error(`invalid piece id: ${id}`);
@@ -147,7 +174,16 @@ export class Library {
     const filePath = path.join(dir, `${id}${PIECE_EXT}`);
     const body = opts?.body ?? "";
     fs.writeFileSync(filePath, body, "utf8");
-    return { id, path: filePath, medium: "text", body };
+    if (opts?.title !== undefined) {
+      writeMeta(id, filePath, { formatVersion: META_FORMAT_VERSION, title: opts.title });
+    }
+    return {
+      id,
+      path: filePath,
+      medium: "text",
+      body,
+      title: displayTitle({ title: opts?.title, medium: "text" }),
+    };
   }
 
   /**
@@ -185,6 +221,7 @@ export class Library {
       overlay: emptyOverlay(),
       overlayPath,
       sourceName,
+      title: displayTitle({ sourceName, medium: "pdf" }),
     };
   }
 
@@ -197,7 +234,14 @@ export class Library {
       return loadPdfPiece(id, entry.path);
     }
     const body = fs.readFileSync(entry.path, "utf8");
-    return { id, path: entry.path, medium: "text", body };
+    const meta = readMeta(id, entry.path);
+    return {
+      id,
+      path: entry.path,
+      medium: "text",
+      body,
+      title: displayTitle({ title: meta.title, medium: "text" }),
+    };
   }
 
   save(id: string, body: string): TextPiece {
@@ -209,7 +253,24 @@ export class Library {
       throw new OverlayError("refuse to write text marks into a PDF host; use the overlay sidecar");
     }
     fs.writeFileSync(entry.path, body, "utf8");
-    return { id, path: entry.path, medium: "text", body };
+    const meta = readMeta(id, entry.path);
+    return {
+      id,
+      path: entry.path,
+      medium: "text",
+      body,
+      title: displayTitle({ title: meta.title, medium: "text" }),
+    };
+  }
+
+  /** Display name only. Does not rewrite `.intro.md` or the PDF bytes. */
+  saveTitle(id: string, title: string): Piece {
+    const entry = this.resolveEntry(id);
+    if (!entry) {
+      throw new Error(`piece not found: ${id}`);
+    }
+    writeMeta(id, entry.path, { formatVersion: META_FORMAT_VERSION, title });
+    return this.load(id);
   }
 
   saveOverlay(id: string, overlay: PdfOverlay): PdfPiece {
@@ -231,10 +292,26 @@ export class Library {
     return fs.readFileSync(piece.pdfPath);
   }
 
-  /** Piece ids and paths. Does not read bodies or PDF bytes. */
+  /** Piece ids, paths, and display titles. Does not read bodies or PDF bytes. */
   list(): ListedPiece[] {
     return [...indexPieces(this.root).values()]
-      .map(({ id, path: filePath, medium }) => ({ id, path: filePath, medium }))
+      .map(({ id, path: filePath, medium }) => {
+        const meta = readMeta(id, filePath);
+        let sourceName: string | undefined;
+        if (medium === "pdf") {
+          try {
+            sourceName = parseHostMeta(fs.readFileSync(filePath, "utf8")).sourceName;
+          } catch {
+            /* host json may be damaged; title still has a fallback */
+          }
+        }
+        return {
+          id,
+          path: filePath,
+          medium,
+          title: displayTitle({ title: meta.title, sourceName, medium }),
+        };
+      })
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 }

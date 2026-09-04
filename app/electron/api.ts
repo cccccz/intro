@@ -5,6 +5,7 @@ export type PieceDto = {
   id: string;
   path: string;
   medium: "text" | "pdf";
+  title: string;
   body: string;
   clean: string;
   rivets: RivetSpec[];
@@ -14,9 +15,16 @@ export type PieceDto = {
   sourceName?: string;
 };
 
+export type ListedPieceDto = {
+  id: string;
+  path: string;
+  medium: "text" | "pdf";
+  title: string;
+};
+
 export type LibraryDto = {
   root: string;
-  pieces: { id: string; path: string; medium: "text" | "pdf" }[];
+  pieces: ListedPieceDto[];
 };
 
 export type Ok<T> = { ok: true } & T;
@@ -25,11 +33,16 @@ export type Err = { ok: false; error: string };
 export type IntroApi = {
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
-  listPieces: () => Promise<Ok<{ pieces: { id: string; path: string }[] }> | Err>;
+  listPieces: () => Promise<Ok<{ pieces: ListedPieceDto[] }> | Err>;
   createPiece: (opts?: {
     id?: string;
     body?: string;
-  }) => Promise<Ok<{ piece: PieceDto; pieces: { id: string; path: string }[] }> | Err>;
+    title?: string;
+  }) => Promise<Ok<{ piece: PieceDto; pieces: ListedPieceDto[] }> | Err>;
+  setPieceTitle: (
+    id: string,
+    title: string,
+  ) => Promise<Ok<{ piece: PieceDto; pieces: ListedPieceDto[] }> | Err>;
   loadPiece: (id: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   persistClean: (
     id: string,
@@ -57,6 +70,7 @@ export const IPC = {
   openLibraryPath: "library:openPath",
   listPieces: "library:list",
   createPiece: "piece:create",
+  setPieceTitle: "piece:setTitle",
   loadPiece: "piece:load",
   persistClean: "piece:persistClean",
   hangSide: "piece:hangSide",

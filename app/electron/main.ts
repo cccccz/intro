@@ -93,10 +93,20 @@ ipcMain.handle(IPC.listPieces, async () => {
   }
 });
 
-ipcMain.handle(IPC.createPiece, async (_e, opts?: { id?: string; body?: string }) => {
+ipcMain.handle(IPC.createPiece, async (_e, opts?: { id?: string; body?: string; title?: string }) => {
   try {
     const lib = requireLib();
-    const piece = lib.createPiece({ id: opts?.id, body: opts?.body ?? "" });
+    const piece = lib.createPiece({ id: opts?.id, body: opts?.body ?? "", title: opts?.title });
+    return { ok: true, piece: pieceView(piece), pieces: lib.list() };
+  } catch (err) {
+    return fail(err);
+  }
+});
+
+ipcMain.handle(IPC.setPieceTitle, async (_e, id: string, title: string) => {
+  try {
+    const lib = requireLib();
+    const piece = lib.saveTitle(id, title);
     return { ok: true, piece: pieceView(piece), pieces: lib.list() };
   } catch (err) {
     return fail(err);

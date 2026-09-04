@@ -1,8 +1,10 @@
 /** Shapes match `app/pdf/overlay.ts`. Duplicated: renderer build cannot import that tree. */
 
+import { clampPage, clampZoom, ZOOM_FIT } from "./pdf-nav.ts";
 import {
   PDF_OVERSCAN_PAGES,
   PDF_RESIZE_DEBOUNCE_MS,
+  currentPageFromScroll,
   expandPageWindow,
   pageInRange,
   rasterWindowFromScroll,
@@ -44,9 +46,24 @@ type PdfPage = {
   }) => { promise: Promise<void>; cancel: () => void };
 };
 
+type PdfOutlineNode = {
+  title?: string;
+  dest?: unknown;
+  items?: PdfOutlineNode[];
+};
+
 type PdfDocument = {
   numPages: number;
   getPage: (n: number) => Promise<PdfPage>;
+  getOutline?: () => Promise<PdfOutlineNode[] | null>;
+  getDestination?: (id: string) => Promise<unknown>;
+  getPageIndex?: (ref: unknown) => Promise<number>;
+};
+
+export type PdfOutlineEntry = {
+  title: string;
+  page: number | null;
+  children: PdfOutlineEntry[];
 };
 
 type PdfJsModule = {
@@ -63,6 +80,12 @@ export type PdfViewHandle = {
   getSelection: () => PdfSelection | null;
   clearSelection: () => void;
   setRivets: (rivets: readonly OverlayRivet[], openIds: readonly string[]) => void;
+  getZoom: () => number;
+  setZoom: (zoom: number) => Promise<void>;
+  gotoPage: (page: number) => void;
+  numPages: () => number;
+  currentPage: () => number;
+  getOutline: () => Promise<PdfOutlineEntry[]>;
 };
 
 const docCache = new Map<string, Promise<PdfDocument>>();
@@ -218,6 +241,43 @@ function clientToPdfRect(
   return { x, y, width, height };
 }
 
+async function destToPage(doc: PdfDocument, dest: unknown): Promise<number | null> {
+  try {
+    let explicit = dest;
+    if (typeof dest === "string") {
+      explicit = (await doc.getDestination?.(dest)) ?? null;
+    }
+    if (!Array.isArray(explicit) || explicit[0] == null) {
+      return null;
+    }
+    const index = await doc.getPageIndex?.(explicit[0]);
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+      return null;
+    }
+    return index + 1;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveOutline(
+  doc: PdfDocument,
+  items: PdfOutlineNode[] | null | undefined,
+): Promise<PdfOutlineEntry[]> {
+  if (!items?.length) {
+    return [];
+  }
+  const out: PdfOutlineEntry[] = [];
+  for (const item of items) {
+    out.push({
+      title: String(item.title ?? "").trim() || "(untitled)",
+      page: item.dest != null ? await destToPage(doc, item.dest) : null,
+      children: await resolveOutline(doc, item.items),
+    });
+  }
+  return out;
+}
+
 export async function mountPdfView(opts: {
   root: HTMLElement;
   pieceId: string;
@@ -228,6 +288,7 @@ export async function mountPdfView(opts: {
   onRivetEnter?: (id: string) => void;
   onRivetLeave?: () => void;
   onRivetClick?: (id: string) => void;
+  onPageChange?: (page: number, numPages: number) => void;
 }): Promise<PdfViewHandle> {
   const root = opts.root;
   root.replaceChildren();
@@ -236,6 +297,8 @@ export async function mountPdfView(opts: {
   let openIds = opts.openIds;
   let selection: PdfSelection | null = null;
   let dead = false;
+  let zoom = ZOOM_FIT;
+  let outlineCache: PdfOutlineEntry[] | null = null;
   const pages: PageSlot[] = [];
   const intersecting = new Set<number>();
   let applied: PageRange = { from: 1, to: 0 };
@@ -248,7 +311,25 @@ export async function mountPdfView(opts: {
     const page = await doc.getPage(pageNo);
     const base = page.getViewport({ scale: 1 });
     const width = Math.max(240, root.clientWidth - 16);
-    return width / base.width;
+    return (width / base.width) * zoom;
+  };
+
+  const readCurrentPage = (): number => {
+    if (intersecting.size > 0) {
+      return Math.min(...intersecting);
+    }
+    return currentPageFromScroll(
+      pages.map((p) => p.el.offsetTop),
+      pages.map((p) => p.el.offsetHeight),
+      root.scrollTop,
+      root.clientHeight,
+    );
+  };
+
+  const emitPage = (): void => {
+    if (!dead) {
+      opts.onPageChange?.(readCurrentPage(), doc.numPages);
+    }
   };
 
   const measureViewports = async (scale: number): Promise<PdfViewport[]> => {
@@ -434,6 +515,7 @@ export async function mountPdfView(opts: {
     if (dead || gen !== applyGen) {
       return;
     }
+    emitPage();
     opts.onChrome();
   };
 
@@ -449,8 +531,25 @@ export async function mountPdfView(opts: {
       syncRaf = 0;
       if (!dead) {
         syncWindow();
+        emitPage();
       }
     });
+  };
+
+  const gotoPage = (page: number): void => {
+    if (dead || pages.length === 0) {
+      return;
+    }
+    const n = clampPage(page, doc.numPages);
+    const slot = pages[n - 1];
+    if (!slot) {
+      return;
+    }
+    slot.el.scrollIntoView({ block: "start" });
+    intersecting.clear();
+    intersecting.add(n);
+    syncWindow();
+    emitPage();
   };
 
   const io = new IntersectionObserver(
@@ -599,6 +698,34 @@ export async function mountPdfView(opts: {
       }
       paintDraft();
       opts.onChrome();
+    },
+    getZoom: () => zoom,
+    setZoom: async (next) => {
+      const z = clampZoom(next);
+      const page = readCurrentPage();
+      if (z === zoom && pages.length > 0) {
+        return;
+      }
+      zoom = z;
+      await layoutPlaceholders();
+      if (!dead) {
+        gotoPage(page);
+      }
+    },
+    gotoPage,
+    numPages: () => doc.numPages,
+    currentPage: readCurrentPage,
+    getOutline: async () => {
+      if (outlineCache) {
+        return outlineCache;
+      }
+      try {
+        const raw = (await doc.getOutline?.()) ?? [];
+        outlineCache = await resolveOutline(doc, raw);
+      } catch {
+        outlineCache = [];
+      }
+      return outlineCache;
     },
   };
 }

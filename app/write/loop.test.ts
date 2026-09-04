@@ -56,7 +56,11 @@ describe("M1 write loop on disk", () => {
 
     const view = pieceView(lib.load("host01"));
     assert.equal(view.clean, "宿主一段可以再挂侧边。");
+    assert.equal(view.title, "Untitled");
     assert.equal(view.rivets[0].to, first.side.id);
+    lib.saveTitle("host01", "Host note");
+    assert.equal(pieceView(lib.load("host01")).title, "Host note");
+    assert.equal(strip(lib.load("host01").body), "宿主一段可以再挂侧边。");
 
     let columns = openRoot("host01");
     columns = openSide(columns, ROOT_ID, first.side.id, first.rivetId);

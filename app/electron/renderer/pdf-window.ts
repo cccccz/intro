@@ -96,6 +96,37 @@ export function intersectingPagesFromScroll(
  * Raster window from placeholder metrics. If the viewport sits past the last
  * page, pin to the end instead of seeding page 1.
  */
+/** First intersecting page, or the nearest placeholder if the viewport is empty. */
+export function currentPageFromScroll(
+  pageTops: readonly number[],
+  pageHeights: readonly number[],
+  scrollTop: number,
+  viewportHeight: number,
+): number {
+  const hit = intersectingPagesFromScroll(pageTops, pageHeights, scrollTop, viewportHeight);
+  if (hit.length > 0) {
+    return hit[0]!;
+  }
+  const n = Math.min(pageTops.length, pageHeights.length);
+  if (n < 1) {
+    return 1;
+  }
+  if (scrollTop <= pageTops[0]!) {
+    return 1;
+  }
+  const lastBottom = pageTops[n - 1]! + pageHeights[n - 1]!;
+  if (scrollTop >= lastBottom) {
+    return n;
+  }
+  let page = 1;
+  for (let i = 0; i < n; i++) {
+    if (pageTops[i]! <= scrollTop) {
+      page = i + 1;
+    }
+  }
+  return page;
+}
+
 export function rasterWindowFromScroll(
   pageTops: readonly number[],
   pageHeights: readonly number[],
