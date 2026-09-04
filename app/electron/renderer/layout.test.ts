@@ -34,9 +34,15 @@ describe("chrome layout", () => {
     assert.equal(defaultColumnWidth(1, false), COLUMN_DEFAULT);
   });
 
-  it("lets the host column fill leftover space until a width is stored", () => {
-    assert.deepEqual(columnSize(undefined, 0, true), { flex: "1 1 auto", width: "auto" });
-    assert.deepEqual(columnSize(undefined, 0, false), { flex: "1 1 auto", width: "auto" });
+  it("keeps every column at a fixed px width until the user stores a drag", () => {
+    assert.deepEqual(columnSize(undefined, 0, true), {
+      flex: `0 0 ${COLUMN_PDF_DEFAULT}px`,
+      width: `${COLUMN_PDF_DEFAULT}px`,
+    });
+    assert.deepEqual(columnSize(undefined, 0, false), {
+      flex: `0 0 ${COLUMN_DEFAULT}px`,
+      width: `${COLUMN_DEFAULT}px`,
+    });
     assert.deepEqual(columnSize(undefined, 1, false), {
       flex: `0 0 ${COLUMN_DEFAULT}px`,
       width: `${COLUMN_DEFAULT}px`,

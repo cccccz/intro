@@ -170,4 +170,16 @@ describe("PDF host on disk", () => {
     assert.throws(() => lib.save("host01", "not a mark host"), OverlayError);
     assert.ok(isPdfMagic(lib.readPdfBytes("host01")));
   });
+
+  it("deletes a text piece and refuses to delete a PDF host", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "note01", body: "x" });
+    lib.removeTextPiece("note01");
+    assert.equal(lib.resolve("note01"), null);
+    const src = path.join(lib.root, "in.pdf");
+    fs.writeFileSync(src, minimalPdf());
+    lib.attachPdf(src, { id: "pdf01" });
+    assert.throws(() => lib.removeTextPiece("pdf01"), OverlayError);
+    assert.ok(lib.resolve("pdf01"));
+  });
 });

@@ -43,17 +43,14 @@ export function defaultColumnWidth(depth: number, pdfHost: boolean): number {
 }
 
 /**
- * Host column (d0) fills leftover board space until the user drags a splitter.
- * Side columns and any persisted width stay fixed px.
+ * Columns stay a fixed px width unless the user drags a splitter.
+ * Stored widths win; otherwise PDF host defaults to COLUMN_PDF_DEFAULT, sides to COLUMN_DEFAULT.
  */
 export function columnSize(
   stored: number | undefined,
   depth: number,
   pdfHost: boolean,
 ): ColumnSize {
-  if (stored === undefined && depth === 0) {
-    return { flex: "1 1 auto", width: "auto" };
-  }
   const width = stored ?? defaultColumnWidth(depth, pdfHost);
   return { flex: `0 0 ${width}px`, width: `${width}px` };
 }

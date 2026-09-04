@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { parse, strip } from "../marks/index.ts";
 import { Library } from "../library/index.ts";
-import { hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
+import { dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
 import { HOST_EXT, OverlayError, isPdfMagic, minimalPdf } from "../pdf/index.ts";
 import {
   ROOT_ID,
@@ -265,5 +265,61 @@ describe("PDF overlay hang", () => {
       }),
       OverlayError,
     );
+  });
+});
+
+describe("dropSide", () => {
+  it("deletes a nested tree and strips the parent rivet", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "host01", body: "宿主一段可以再挂侧边。" });
+    const first = hangSide(lib, "host01", { start: 0, end: 2 });
+    persistClean(lib, first.side.id, "侧边再问一层。");
+    const nested = hangSide(lib, first.side.id, { start: 0, end: 2 });
+    const result = dropSide(lib, first.side.id);
+    assert.equal(result.deleted.includes(first.side.id), true);
+    assert.equal(result.deleted.includes(nested.side.id), true);
+    assert.equal(lib.resolve(first.side.id), null);
+    assert.equal(lib.resolve(nested.side.id), null);
+    assert.equal(parse(lib.load("host01").body).rivets.length, 0);
+    assert.equal(strip(lib.load("host01").body), "宿主一段可以再挂侧边。");
+  });
+
+  it("keeps a reused side when another rivet still points at it", () => {
+    const lib = tmpLibrary();
+    lib.createPiece({ id: "host01", body: "alpha beta" });
+    const parent = hangSide(lib, "host01", { start: 0, end: 5 });
+    persistClean(lib, parent.side.id, "from alpha");
+    const shared = hangSide(lib, parent.side.id, { start: 0, end: 4 });
+    hangSide(lib, "host01", { start: 6, end: 10 }, { sideId: shared.side.id });
+    const dropped = dropSide(lib, parent.side.id);
+    assert.equal(dropped.deleted.includes(parent.side.id), true);
+    assert.equal(dropped.deleted.includes(shared.side.id), false);
+    assert.equal(lib.resolve(parent.side.id), null);
+    assert.ok(lib.resolve(shared.side.id));
+    const leftover = parse(lib.load("host01").body).rivets;
+    assert.equal(leftover.length, 1);
+    assert.equal(leftover[0].to, shared.side.id);
+  });
+
+  it("strips a PDF overlay rivet without deleting the PDF host", () => {
+    const lib = tmpLibrary();
+    const src = path.join(lib.root, "in.pdf");
+    fs.writeFileSync(src, minimalPdf());
+    lib.attachPdf(src, { id: "pdf01" });
+    const hung = hangPdfSide(lib, "pdf01", [
+      { page: 1, rect: { x: 1, y: 1, width: 10, height: 10 } },
+    ]);
+    persistClean(lib, hung.side.id, "note");
+    const nested = hangSide(lib, hung.side.id, { start: 0, end: 4 });
+    const result = dropSide(lib, hung.side.id);
+    assert.equal(result.deleted.includes(hung.side.id), true);
+    assert.equal(result.deleted.includes(nested.side.id), true);
+    assert.ok(lib.resolve("pdf01"));
+    const host = lib.load("pdf01");
+    assert.equal(host.medium, "pdf");
+    if (host.medium === "pdf") {
+      assert.equal(host.overlay.rivets.length, 0);
+    }
+    assert.throws(() => dropSide(lib, "pdf01"), OverlayError);
   });
 });

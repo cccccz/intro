@@ -10,7 +10,13 @@ import {
   ulid,
 } from "../marks/index.ts";
 import type { Damage, RivetSpec } from "../marks/types.ts";
-import { OverlayError, addOverlayRivet, type OverlayRivet, type PdfAnchor } from "../pdf/overlay.ts";
+import {
+  OverlayError,
+  addOverlayRivet,
+  removeOverlayRivet,
+  type OverlayRivet,
+  type PdfAnchor,
+} from "../pdf/overlay.ts";
 
 export type PieceView = {
   id: string;
@@ -150,4 +156,132 @@ export function hangPdfSide(
     ...(opts?.quote ? { quote: opts.quote } : {}),
   });
   return { host: lib.saveOverlay(hostId, overlay), side, rivetId };
+}
+
+export type DropResult = {
+  deleted: string[];
+  hosts: Piece[];
+};
+
+type InboundLink = {
+  hostId: string;
+  rivetId: string;
+};
+
+function outboundTos(piece: Piece): string[] {
+  if (piece.medium === "pdf") {
+    return piece.overlay.rivets
+      .map((rivet) => rivet.to)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+  }
+  return flattenRivetSpecs(parse(piece.body).rivets)
+    .map((spec) => spec.to)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+function inboundIndex(lib: Library): Map<string, InboundLink[]> {
+  const map = new Map<string, InboundLink[]>();
+  const addLink = (to: string | null | undefined, hostId: string, rivetId: string): void => {
+    if (!to) {
+      return;
+    }
+    const list = map.get(to) ?? [];
+    list.push({ hostId, rivetId });
+    map.set(to, list);
+  };
+  for (const listed of lib.list()) {
+    const piece = lib.load(listed.id);
+    if (piece.medium === "pdf") {
+      for (const rivet of piece.overlay.rivets) {
+        addLink(rivet.to, piece.id, rivet.id);
+      }
+    } else {
+      for (const spec of flattenRivetSpecs(parse(piece.body).rivets)) {
+        addLink(spec.to, piece.id, spec.id);
+      }
+    }
+  }
+  return map;
+}
+
+function deletionSet(lib: Library, rootId: string): Set<string> {
+  const inbound = inboundIndex(lib);
+  const deleted = new Set<string>([rootId]);
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const piece = lib.load(id);
+    for (const child of outboundTos(piece)) {
+      if (deleted.has(child)) {
+        continue;
+      }
+      const entry = lib.resolveEntry(child);
+      if (!entry || entry.medium !== "text") {
+        continue;
+      }
+      const others = (inbound.get(child) ?? []).filter((link) => !deleted.has(link.hostId));
+      if (others.length === 0) {
+        deleted.add(child);
+        queue.push(child);
+      }
+    }
+  }
+  return deleted;
+}
+
+function bodyWithoutDeletedTos(body: string, deleted: ReadonlySet<string>): string {
+  const parsed = parse(body);
+  if (parsed.damage.length > 0) {
+    throw new AddError("host body is damaged; refuse to drop", parsed.damage);
+  }
+  const specs = flattenRivetSpecs(parsed.rivets);
+  const kept = specs.filter((spec) => !spec.to || !deleted.has(spec.to));
+  if (kept.length === specs.length) {
+    return body;
+  }
+  return add(strip(body), kept);
+}
+
+/**
+ * Delete a text side and unreferenced children. Strips inbound rivets on survivors.
+ * PDF hosts are never deleted.
+ */
+export function dropSide(lib: Library, pieceId: string): DropResult {
+  const entry = lib.resolveEntry(pieceId);
+  if (!entry) {
+    throw new Error(`piece not found: ${pieceId}`);
+  }
+  if (entry.medium !== "text") {
+    throw new OverlayError("dropSide is only for text pieces");
+  }
+  const deleted = deletionSet(lib, pieceId);
+  const hosts: Piece[] = [];
+  for (const listed of lib.list()) {
+    if (deleted.has(listed.id)) {
+      continue;
+    }
+    const piece = lib.load(listed.id);
+    if (piece.medium === "pdf") {
+      let overlay = piece.overlay;
+      let changed = false;
+      for (const rivet of piece.overlay.rivets) {
+        if (rivet.to && deleted.has(rivet.to)) {
+          overlay = removeOverlayRivet(overlay, rivet.id);
+          changed = true;
+        }
+      }
+      if (changed) {
+        hosts.push(lib.saveOverlay(listed.id, overlay));
+      }
+    } else {
+      const next = bodyWithoutDeletedTos(piece.body, deleted);
+      if (next !== piece.body) {
+        hosts.push(lib.save(listed.id, next));
+      }
+    }
+  }
+  for (const id of deleted) {
+    lib.removeTextPiece(id);
+  }
+  return { deleted: [...deleted], hosts };
 }

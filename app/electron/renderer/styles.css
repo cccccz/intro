@@ -160,14 +160,27 @@ body.is-col-resizing .pdf-overlay {
   padding: 0;
 }
 
-#piece-list button {
+#piece-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+#piece-list .piece-open {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
-  margin-bottom: 4px;
+  margin-bottom: 0;
+}
+
+#piece-list .piece-drop {
+  flex: 0 0 auto;
+  padding: 4px 8px;
 }
 
 #piece-list .piece-title {
@@ -686,7 +699,8 @@ body.is-col-resizing .pdf-overlay {
 .body-pdf {
   position: absolute;
   inset: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 4px;
   background: #e4e4e7;
 }

@@ -7,6 +7,7 @@ import {
   emptyOverlay,
   parseOverlay,
   quadsToRects,
+  removeOverlayRivet,
   serializeOverlay,
 } from "./overlay.ts";
 import { createHostMeta, parseHostMeta, pdfFileName } from "./host.ts";
@@ -76,6 +77,25 @@ describe("PDF overlay model", () => {
         }),
       /duplicate/,
     );
+  });
+
+  it("removes an overlay rivet by id", () => {
+    const one = addOverlayRivet(emptyOverlay(), {
+      id: "rv1",
+      to: "side01",
+      anchors: [{ page: 1, rect: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const two = addOverlayRivet(one, {
+      id: "rv2",
+      to: "side02",
+      anchors: [{ page: 1, rect: { x: 2, y: 2, width: 1, height: 1 } }],
+    });
+    const leftover = removeOverlayRivet(two, "rv1");
+    assert.deepEqual(
+      leftover.rivets.map((r) => r.id),
+      ["rv2"],
+    );
+    assert.throws(() => removeOverlayRivet(leftover, "rv1"), OverlayError);
   });
 
   it("does not treat a selection as an index into PDF bytes", () => {

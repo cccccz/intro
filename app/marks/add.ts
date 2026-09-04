@@ -192,3 +192,17 @@ export function addMark(
     { id, to: attrs?.to ?? null, start: selection.start, end: selection.end },
   ]);
 }
+
+/** Drop one rivet by id; remaining specs keep their clean ranges. Inner siblings stay. */
+export function removeMark(body: string, rivetId: string): string {
+  const parsed = parse(body);
+  if (parsed.damage.length > 0) {
+    throw new AddError("host body is damaged; refuse to remove", parsed.damage);
+  }
+  const specs = flattenRivetSpecs(parsed.rivets);
+  const kept = specs.filter((spec) => spec.id !== rivetId);
+  if (kept.length === specs.length) {
+    return body;
+  }
+  return add(strip(body), kept);
+}

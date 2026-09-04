@@ -206,6 +206,18 @@ export function addOverlayRivet(
   return next;
 }
 
+export function removeOverlayRivet(overlay: PdfOverlay, rivetId: string): PdfOverlay {
+  if (!overlay.rivets.some((rivet) => rivet.id === rivetId)) {
+    throw new OverlayError(`overlay rivet not found: ${rivetId}`);
+  }
+  const next: PdfOverlay = {
+    formatVersion: OVERLAY_FORMAT_VERSION,
+    rivets: overlay.rivets.filter((rivet) => rivet.id !== rivetId),
+  };
+  assertOverlay(next);
+  return next;
+}
+
 export function overlayRivetsById(overlay: PdfOverlay): Map<string, OverlayRivet> {
   return new Map(overlay.rivets.map((r) => [r.id, r]));
 }

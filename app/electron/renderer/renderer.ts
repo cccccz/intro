@@ -96,6 +96,9 @@ type IntroApi = {
     sideId?: string;
     quote?: string;
   }) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
+  dropSide: (
+    id: string,
+  ) => Promise<Ok<{ deleted: string[]; hosts: PieceDto[]; pieces: ListedPieceDto[] }> | Err>;
 };
 
 /** Keep in sync with app/write/session.ts (inlined so file:// loads one script). */
@@ -227,6 +230,7 @@ let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
 let pendingPdfPage: { nodeId: string; page: number } | null = null;
+const pendingPdfRestore = new Map<string, { zoom: number; top: number; left: number }>();
 
 function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
@@ -536,7 +540,7 @@ function scheduleChrome(): void {
   });
 }
 
-/** 结论 #36: source out of column view → don’t paint that side. Not a close. */
+/** Hide a side card when its source is out of the host viewport. The column stays. */
 function syncViewportSides(): void {
   const cards = Array.from(el.columns.querySelectorAll(".card")) as HTMLElement[];
   cards.sort((a, b) => {
@@ -554,11 +558,6 @@ function syncViewportSides(): void {
     const parentCard = host?.closest(".card") as HTMLElement | null;
     const parentHidden = Boolean(host && (host.hidden || parentCard?.hidden));
     card.hidden = parentHidden || !host || visibleRects(host, node.viaRivetId).length === 0;
-  }
-  for (const column of el.columns.querySelectorAll(":scope > .column.stack")) {
-    const depthCards = column.querySelectorAll(":scope .card");
-    const any = Array.from(depthCards).some((card) => !(card as HTMLElement).hidden);
-    (column as HTMLElement).hidden = depthCards.length > 0 && !any;
   }
 }
 
@@ -643,6 +642,52 @@ function applyLibrary(library: LibraryDto): void {
   renderSidebar();
 }
 
+function pruneDeletedNodes(deleted: ReadonlySet<string>): void {
+  if (state.nodes.some((n) => n.depth === 0 && deleted.has(n.pieceId))) {
+    state.nodes = [];
+    return;
+  }
+  const ids = state.nodes.filter((n) => deleted.has(n.pieceId)).map((n) => n.id);
+  for (const id of ids) {
+    if (state.nodes.some((n) => n.id === id)) {
+      state.nodes = closeNode(state.nodes, id);
+    }
+  }
+}
+
+async function confirmDropSide(pieceId: string): Promise<void> {
+  const listed = state.pieces.find((p) => p.id === pieceId);
+  if (listed?.medium === "pdf") {
+    setStatus("PDF hosts cannot be deleted from here.", true);
+    return;
+  }
+  const label = listed?.title ?? pieceId;
+  if (!window.confirm(`Delete “${label}” and unreferenced children? This cannot be undone.`)) {
+    return;
+  }
+  const result = await window.intro.dropSide(pieceId);
+  if (!result.ok) {
+    setStatus(result.error, true);
+    return;
+  }
+  const deleted = new Set(result.deleted);
+  pruneDeletedNodes(deleted);
+  for (const id of result.deleted) {
+    delete state.views[id];
+  }
+  for (const host of result.hosts) {
+    state.views[host.id] = host;
+  }
+  state.pieces = result.pieces;
+  renderSidebar();
+  renderColumns();
+  setStatus(
+    result.deleted.length === 1
+      ? `Deleted ${result.deleted[0]}`
+      : `Deleted ${result.deleted.length} pieces`,
+  );
+}
+
 function renderSidebar(): void {
   el.list.replaceChildren();
   el.sidebarEmpty.hidden = state.pieces.length > 0 || !state.root;
@@ -654,6 +699,7 @@ function renderSidebar(): void {
     const li = document.createElement("li");
     const btn = document.createElement("button");
     btn.type = "button";
+    btn.className = "piece-open";
     const title = document.createElement("span");
     title.className = "piece-title";
     title.textContent = piece.title;
@@ -674,11 +720,36 @@ function renderSidebar(): void {
       void openRootPiece(piece.id);
     });
     li.append(btn);
+    if (piece.medium === "text") {
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "piece-drop danger";
+      drop.textContent = "Delete";
+      drop.title = "Delete this text piece and unreferenced children";
+      drop.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        void confirmDropSide(piece.id);
+      });
+      li.append(drop);
+    }
     el.list.append(li);
   }
 }
 
+function snapshotPdfViews(): void {
+  pendingPdfRestore.clear();
+  for (const [nodeId, handle] of pdfViews) {
+    const scroll = handle.getScroll();
+    pendingPdfRestore.set(nodeId, {
+      zoom: handle.getZoom(),
+      top: scroll.top,
+      left: scroll.left,
+    });
+  }
+}
+
 function disposePdfViews(): void {
+  snapshotPdfViews();
   for (const handle of pdfViews.values()) {
     handle.destroy();
   }
@@ -1116,6 +1187,12 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     });
     pdfViews.get(node.id)?.destroy();
     pdfViews.set(node.id, handle);
+    const restore = pendingPdfRestore.get(node.id);
+    if (restore) {
+      pendingPdfRestore.delete(node.id);
+      await handle.setZoom(restore.zoom);
+      handle.setScroll(restore.top, restore.left);
+    }
     if (pendingPdfPage?.nodeId === node.id) {
       handle.gotoPage(pendingPdfPage.page);
       pendingPdfPage = null;
@@ -1252,7 +1329,15 @@ function renderCard(node: OpenNode): HTMLElement {
     renderColumns();
     setStatus("Closed this side and its subtree. Rivets stay on disk.");
   });
-  head.append(titles, rename, close);
+  const drop = document.createElement("button");
+  drop.type = "button";
+  drop.className = "danger";
+  drop.textContent = "Delete";
+  drop.title = "Delete this note from the library and unreferenced children";
+  drop.addEventListener("click", () => {
+    void confirmDropSide(node.pieceId);
+  });
+  head.append(titles, rename, close, drop);
   card.append(head);
   bindSurface(node, card);
   card.addEventListener("pointerenter", () => {

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Library } from "../library/index.ts";
-import { hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
+import { dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
 import type { PdfAnchor } from "../pdf/overlay.ts";
 import { IPC } from "./api.ts";
 
@@ -215,6 +215,21 @@ ipcMain.handle(
     }
   },
 );
+
+ipcMain.handle(IPC.dropSide, async (_e, id: string) => {
+  try {
+    const lib = requireLib();
+    const result = dropSide(lib, id);
+    return {
+      ok: true,
+      deleted: result.deleted,
+      hosts: result.hosts.map(pieceView),
+      pieces: lib.list(),
+    };
+  } catch (err) {
+    return fail(err);
+  }
+});
 
 app.whenReady().then(() => {
   win = createWindow();

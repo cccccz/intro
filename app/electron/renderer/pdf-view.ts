@@ -85,6 +85,8 @@ export type PdfViewHandle = {
   gotoPage: (page: number) => void;
   numPages: () => number;
   currentPage: () => number;
+  getScroll: () => { top: number; left: number };
+  setScroll: (top: number, left: number) => void;
   getOutline: () => Promise<PdfOutlineEntry[]>;
 };
 
@@ -630,6 +632,8 @@ export async function mountPdfView(opts: {
     if (dead || gen !== layoutGen) {
       return;
     }
+    const scrollTop = root.scrollTop;
+    const scrollLeft = root.scrollLeft;
     for (const slot of pages) {
       const viewport = viewports[slot.page - 1];
       if (!viewport) {
@@ -641,6 +645,8 @@ export async function mountPdfView(opts: {
       }
     }
     applied = { from: 1, to: 0 };
+    root.scrollTop = scrollTop;
+    root.scrollLeft = scrollLeft;
     syncWindow();
   };
 
@@ -715,6 +721,13 @@ export async function mountPdfView(opts: {
     gotoPage,
     numPages: () => doc.numPages,
     currentPage: readCurrentPage,
+    getScroll: () => ({ top: root.scrollTop, left: root.scrollLeft }),
+    setScroll: (top, left) => {
+      root.scrollTop = top;
+      root.scrollLeft = left;
+      syncWindow();
+      emitPage();
+    },
     getOutline: async () => {
       if (outlineCache) {
         return outlineCache;

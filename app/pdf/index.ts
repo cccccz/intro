@@ -16,6 +16,7 @@ export {
   OVERLAY_FORMAT_VERSION,
   OverlayError,
   addOverlayRivet,
+  removeOverlayRivet,
   assertOverlay,
   emptyOverlay,
   overlayRivetsById,

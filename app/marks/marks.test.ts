@@ -6,6 +6,7 @@ import {
   addMark,
   parse,
   rangesCross,
+  removeMark,
   strip,
   ulid,
 } from "./index.ts";
@@ -75,6 +76,20 @@ describe("strip reversible", () => {
     const tree = parse(twice);
     assert.deepEqual(tree.damage, []);
     assert.equal(tree.rivets.map((r) => r.id).join(","), "A,B");
+  });
+
+  it("removeMark drops one spec and keeps nested siblings", () => {
+    const marked = add(clean, [
+      { id: "outer", to: "p1", start: 6, end: 17 },
+      { id: "inner", to: "p2", start: 6, end: 8 },
+    ]);
+    const after = removeMark(marked, "outer");
+    assert.equal(strip(after), clean);
+    const tree = parse(after);
+    assert.deepEqual(tree.damage, []);
+    assert.equal(tree.rivets.length, 1);
+    assert.equal(tree.rivets[0].id, "inner");
+    assert.equal(removeMark(marked, "missing"), marked);
   });
 });
 

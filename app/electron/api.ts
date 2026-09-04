@@ -65,6 +65,7 @@ export type IntroApi = {
     sideId?: string;
     quote?: string;
   }) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
+  dropSide: (id: string) => Promise<Ok<{ deleted: string[]; hosts: PieceDto[]; pieces: ListedPieceDto[] }> | Err>;
 };
 
 export const IPC = {
@@ -79,4 +80,5 @@ export const IPC = {
   attachPdf: "piece:attachPdf",
   readPdf: "piece:readPdf",
   hangPdfSide: "piece:hangPdfSide",
+  dropSide: "piece:dropSide",
 } as const;

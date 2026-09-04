@@ -12,6 +12,7 @@ const IPC = {
   attachPdf: "piece:attachPdf",
   readPdf: "piece:readPdf",
   hangPdfSide: "piece:hangPdfSide",
+  dropSide: "piece:dropSide",
 };
 
 contextBridge.exposeInMainWorld("intro", {
@@ -26,6 +27,7 @@ contextBridge.exposeInMainWorld("intro", {
   attachPdf: () => ipcRenderer.invoke(IPC.attachPdf),
   readPdf: (id) => ipcRenderer.invoke(IPC.readPdf, id),
   hangPdfSide: (opts) => ipcRenderer.invoke(IPC.hangPdfSide, opts),
+  dropSide: (id) => ipcRenderer.invoke(IPC.dropSide, id),
   onLibraryOpened: (cb) => {
     const listener = (_event, library) => cb(library);
     ipcRenderer.on("library:opened", listener);

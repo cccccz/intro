@@ -300,6 +300,20 @@ export class Library {
     return this.load(id);
   }
 
+  /**
+   * Delete a text piece file. Refuses PDF hosts (`{id}.pdf` + sidecars stay).
+   */
+  removeTextPiece(id: string): void {
+    const entry = this.resolveEntry(id);
+    if (!entry) {
+      throw new Error(`piece not found: ${id}`);
+    }
+    if (entry.medium !== "text") {
+      throw new OverlayError("refuse to delete a PDF host; dropSide is for text sides");
+    }
+    fs.unlinkSync(entry.path);
+  }
+
   saveOverlay(id: string, overlay: PdfOverlay): PdfPiece {
     const piece = this.load(id);
     if (piece.medium !== "pdf") {
