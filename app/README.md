@@ -2,7 +2,7 @@
 
 真实现只放这里。`mockup/` 仍是演示，不共用入口。
 
-本轮是 **P2：M1 写回路**。标记与库仍是 P1 API；Electron 壳只调用它们。
+本轮是 **P2：M1 写回路**。标记与库仍是 P1 API；Electron 壳只调用它们。界面截图见 [`docs/screenshots/`](../docs/screenshots/)。
 
 ## 怎么跑
 
