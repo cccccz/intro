@@ -87,7 +87,7 @@ button:disabled { opacity: 0.4; cursor: default; }
   width: 6px;
   align-self: stretch;
   cursor: col-resize;
-  background: #d4d4d8;
+  background: #a1a1aa;
   z-index: 20;
   touch-action: none;
   user-select: none;
@@ -99,14 +99,32 @@ button:disabled { opacity: 0.4; cursor: default; }
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -5px;
-  right: -5px;
+  left: -6px;
+  right: -6px;
   cursor: col-resize;
+}
+
+.splitter.v-split::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 36px;
+  margin: -18px 0 0 -1px;
+  border-radius: 1px;
+  background: #52525b;
+  pointer-events: none;
 }
 
 .splitter.v-split:hover,
 .splitter.v-split.dragging {
   background: #60a5fa;
+}
+
+.splitter.v-split:hover::after,
+.splitter.v-split.dragging::after {
+  background: #1d4ed8;
 }
 
 #columns > .splitter.v-split {
@@ -239,7 +257,7 @@ body.is-col-resizing .pdf-overlay {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -558,13 +576,21 @@ body.is-col-resizing .pdf-overlay {
 
 .pdf-chrome {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
-  padding: 6px 10px;
+  padding: 4px 8px;
+  overflow-x: auto;
   border-bottom: 1px solid var(--line);
   background: #fafafa;
+}
+
+.pdf-chrome > button,
+.pdf-chrome > .pdf-menu,
+.pdf-chrome > .pdf-outline,
+.pdf-chrome > .pdf-page-jump {
+  flex-shrink: 0;
 }
 
 .pdf-zoom-label {
@@ -661,7 +687,7 @@ body.is-col-resizing .pdf-overlay {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 4px;
   background: #e4e4e7;
 }
 
