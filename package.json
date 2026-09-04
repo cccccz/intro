@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "mockup": "tsc -p mockup/tsconfig.json"
+    "mockup": "tsc -p mockup/tsconfig.json",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test app/marks/marks.test.ts app/library/library.test.ts",
+    "typecheck:app": "tsc -p app/tsconfig.json"
   },
   "devDependencies": {
+    "@types/node": "^22.13.14",
     "typescript": "^5.9.2"
   }
 }

@@ -24,9 +24,13 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 测试
 
-现阶段只测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）以及 M1 写路径数据。不做 UI snapshot，也不做 E2E。
+现阶段只测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）以及库文件读写。不做 UI snapshot，也不做 E2E。
 
-标记语法本轮不定，只锁约束，格式留给 P1。
+标记语法见 [`app/marks/SYNTAX.md`](app/marks/SYNTAX.md)。根目录跑 `npm test`（`node:test`，不动 mockup 的 `tsc`）。
+
+## 磁盘上的一篇
+
+库是一个目录。一篇 = `{id}.intro.md`（可在子目录）。id → 路径由文件名主干解析。详见 [`app/README.md`](app/README.md)。
 
 ## 明确不做
 
@@ -38,8 +42,8 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 阶段
 
-- P0：文档（本轮）
-- P1：`app/` 里的标记与库
+- P0：文档
+- P1：`app/` 里的标记与库（本轮）
 - P2：M1 Electron 写回路
 - P3：视口与置顶
 - P4+：以后再说
