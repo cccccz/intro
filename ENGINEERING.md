@@ -48,5 +48,5 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 - P1：`app/` 里的标记与库
 - P2：M1 Electron 写回路（视图像高亮/导线 + 源出视口则不画侧边）
 - P3：置顶带（第 36 条视口藏侧边已随 P2）
-- PDF 宿主第一可用路径（owner 顺序 ④，在 md rendered 之后）：侧车 overlay + 最小 PDF.js 列。不是完整 M5 保真度。
+- PDF 宿主第一可用路径（owner 顺序 ④，在 md rendered 之后）：侧车 overlay + 最小 PDF.js 列。结论第 40 条五条锁定。不是完整 M5 保真度。
 - P4+：以后再说
