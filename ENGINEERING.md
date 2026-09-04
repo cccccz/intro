@@ -24,9 +24,9 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 测试
 
-现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂），以及写者壳把干净正文打成铆点 `<mark>` 的纯函数。不做 UI snapshot，也不做 Electron E2E。
+现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂），以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何）。不做 UI snapshot，也不做 Electron E2E。
 
-写者壳（Electron renderer）必须画出持久的铆点段高亮，以及源段到已打开侧边列的列间导线（结论第 39 条）。标记权威与库 API 不变。
+写者壳的高亮与列间导线是视图像（结论第 39 条）：只读铆点 id 与已有标记算出的选区。第一版几何由 textarea/HTML 提供；日后 PDF 换同一 `rivetId → rects` 接口。不把 overlay 坐标写入磁盘。导线只连「打开的铆点 ↔ 打开的侧边列」。源滚出视口则不画该侧边（第 36 条），不是合上。标记权威与库 API 不变。
 
 标记语法见 [`app/marks/SYNTAX.md`](app/marks/SYNTAX.md)。根目录跑 `npm test`（`node:test`，不动 mockup 的 `tsc`）。
 
@@ -46,6 +46,6 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 - P0：文档
 - P1：`app/` 里的标记与库
-- P2：M1 Electron 写回路（本轮；含持久铆点高亮与列间导线）
-- P3：视口与置顶
+- P2：M1 Electron 写回路（本轮；视图像高亮/导线 + 源出视口则不画侧边）
+- P3：置顶带（第 36 条视口藏侧边已随 P2）
 - P4+：以后再说

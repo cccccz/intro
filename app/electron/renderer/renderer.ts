@@ -1,3 +1,10 @@
+import {
+  attachPoint,
+  clientToAnchor,
+  rectsForRivet,
+  rectsIntersect,
+  type AnchorRect,
+} from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
 
 type Damage = { kind: string; message: string; index: number; id?: string };
@@ -123,15 +130,14 @@ function openRivetAt(hostIndex: number): string | null {
   return state.columns[hostIndex + 1]?.viaRivetId ?? null;
 }
 
-function inClip(node: Element, clip: Element): boolean {
-  const a = node.getBoundingClientRect();
-  const b = clip.getBoundingClientRect();
-  return (
-    a.bottom > b.top + 2 &&
-    a.top < b.bottom - 2 &&
-    a.right > b.left + 2 &&
-    a.left < b.right - 2
-  );
+function clipOf(column: HTMLElement): AnchorRect {
+  const stack = column.querySelector(".editor-stack") ?? column;
+  return clientToAnchor(stack.getBoundingClientRect());
+}
+
+function visibleRects(host: HTMLElement, rivetId: string): AnchorRect[] {
+  const clip = clipOf(host);
+  return rectsForRivet(host, rivetId).filter((box) => rectsIntersect(box, clip));
 }
 
 function paintHighlights(
@@ -164,13 +170,31 @@ function paintColumn(column: HTMLElement): void {
   syncHighlightScroll(editor, highlights);
 }
 
-function scheduleWires(): void {
+function scheduleChrome(): void {
   if (wireFrame) {
     return;
   }
   wireFrame = requestAnimationFrame(() => {
     wireFrame = 0;
+    syncViewportSides();
     drawWires();
+  });
+}
+
+/** 结论 #36: source out of column view → don’t paint that side. Not a close. */
+function syncViewportSides(): void {
+  const columns = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
+  let hideFrom = columns.length;
+  for (let i = 1; i < columns.length; i++) {
+    const via = state.columns[i]?.viaRivetId;
+    const host = columns[i - 1];
+    if (!via || !host || visibleRects(host, via).length === 0) {
+      hideFrom = i;
+      break;
+    }
+  }
+  columns.forEach((column, i) => {
+    column.hidden = i >= hideFrom;
   });
 }
 
@@ -190,10 +214,12 @@ function setHot(id: string | null): void {
   drawWires();
 }
 
+/** Open rivet ↔ opened side column only. Not a knowledge graph. */
 function drawWires(): void {
   const svg = el.wires;
   const board = el.board;
   const br = board.getBoundingClientRect();
+  const boardBox = clientToAnchor(br);
   svg.setAttribute("viewBox", `0 0 ${Math.max(0, br.width)} ${Math.max(0, br.height)}`);
   svg.replaceChildren();
   const columns = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
@@ -201,21 +227,16 @@ function drawWires(): void {
     const via = state.columns[i]?.viaRivetId;
     const host = columns[i - 1];
     const side = columns[i];
-    if (!via || !host || !side) {
+    if (!via || !host || !side || side.hidden) {
       continue;
     }
-    const mark = host.querySelector(`mark[data-rivet="${CSS.escape(via)}"]`) as HTMLElement | null;
-    if (!mark) {
+    const from = attachPoint(visibleRects(host, via));
+    if (!from || !rectsIntersect(clientToAnchor(side.getBoundingClientRect()), boardBox)) {
       continue;
     }
-    const clip = host.querySelector(".editor-stack") ?? host;
-    if (!inClip(mark, clip) || !inClip(side, board)) {
-      continue;
-    }
-    const a = mark.getBoundingClientRect();
+    const x1 = from.x - br.left;
+    const y1 = from.y - br.top;
     const b = side.getBoundingClientRect();
-    const x1 = a.right - br.left;
-    const y1 = a.top + a.height / 2 - br.top;
     const x2 = b.left - br.left;
     const y2 = b.top + 18 - br.top;
     const dx = Math.max(24, Math.min(72, (x2 - x1) / 2));
@@ -278,7 +299,7 @@ function renderColumns(): void {
   state.columns.forEach((col, index) => {
     el.columns.append(renderColumn(col, index));
   });
-  scheduleWires();
+  scheduleChrome();
 }
 
 function renderColumn(col: Column, index: number): HTMLElement {
@@ -335,11 +356,11 @@ function renderColumn(col: Column, index: number): HTMLElement {
     );
     syncHighlightScroll(editor, highlights);
     schedulePersist(col.pieceId, editor);
-    scheduleWires();
+    scheduleChrome();
   });
   editor.addEventListener("scroll", () => {
     syncHighlightScroll(editor, highlights);
-    scheduleWires();
+    scheduleChrome();
   });
 
   stack.append(highlights, editor);
@@ -438,7 +459,7 @@ async function persistNow(id: string, clean: string): Promise<void> {
   if (column) {
     paintColumn(column);
   }
-  scheduleWires();
+  scheduleChrome();
   setStatus(`Saved ${id}`);
 }
 
@@ -556,9 +577,9 @@ window.intro.onLibraryOpened((library) => {
   setStatus(`Library ${library.root}`);
 });
 
-el.columns.addEventListener("scroll", scheduleWires);
-window.addEventListener("resize", scheduleWires);
-new ResizeObserver(scheduleWires).observe(el.board);
+el.columns.addEventListener("scroll", scheduleChrome);
+window.addEventListener("resize", scheduleChrome);
+new ResizeObserver(scheduleChrome).observe(el.board);
 
 renderSidebar();
 renderColumns();

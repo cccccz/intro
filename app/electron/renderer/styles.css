@@ -148,6 +148,10 @@ button:disabled { opacity: 0.4; cursor: default; }
   opacity: 1;
 }
 
+.column[hidden] {
+  display: none !important;
+}
+
 .column {
   flex: 1 0 320px;
   max-width: 480px;

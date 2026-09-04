@@ -16,8 +16,8 @@ function escapeHtml(text: string): string {
 type Event = { pos: number; kind: "start" | "end"; rivet: RivetRange };
 
 /**
- * Clean text → HTML with nested <mark data-rivet> around riveted spans.
- * Offsets are UTF-16, same as textarea selection / addMark.
+ * Textarea/HTML geometry provider: paint `[data-rivet]` from clean ranges.
+ * View only — offsets come from parsed marks; nothing here is written back.
  */
 export function highlightHtml(
   clean: string,
