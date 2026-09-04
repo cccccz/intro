@@ -88,9 +88,10 @@ button:disabled { opacity: 0.4; cursor: default; }
   align-self: stretch;
   cursor: col-resize;
   background: #d4d4d8;
-  z-index: 8;
+  z-index: 20;
   touch-action: none;
   user-select: none;
+  pointer-events: auto;
 }
 
 .splitter.v-split::before {
@@ -110,6 +111,11 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 #columns > .splitter.v-split {
   flex: 0 0 6px;
+  z-index: 20;
+}
+
+.column[hidden] + .splitter.v-split {
+  display: none;
 }
 
 body.is-col-resizing,
@@ -182,6 +188,8 @@ body.is-col-resizing .pdf-overlay {
 #columns {
   flex: 1;
   min-width: 0;
+  position: relative;
+  z-index: 1;
   display: flex;
   overflow-x: auto;
   background: var(--bg);
@@ -216,6 +224,8 @@ body.is-col-resizing .pdf-overlay {
 }
 
 .column {
+  position: relative;
+  z-index: 0;
   flex: 0 0 360px;
   min-width: 240px;
   display: flex;

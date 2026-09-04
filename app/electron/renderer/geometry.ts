@@ -59,5 +59,7 @@ export function firstPaintedRects(nodes: Iterable<RectBox>): AnchorRect[] {
  * overlay `[data-rivet]` from page+rect anchors. Wire/viewport code is shared.
  */
 export function rectsForRivet(host: ParentNode, rivetId: string): AnchorRect[] {
-  return firstPaintedRects(host.querySelectorAll(`[data-rivet="${CSS.escape(rivetId)}"]`));
+  // Chrome lists also use data-rivet for hover; those buttons are not geometry.
+  const sel = `mark[data-rivet="${CSS.escape(rivetId)}"], .pdf-hl[data-rivet="${CSS.escape(rivetId)}"]`;
+  return firstPaintedRects(host.querySelectorAll(sel));
 }
