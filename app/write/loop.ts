@@ -103,6 +103,25 @@ export function persistClean(lib: Library, id: string, clean: string): Piece {
   return lib.save(id, add(clean, specs));
 }
 
+/** Optimistic range edit used by editable pinned projections. */
+export function editExcerpt(lib: Library, id: string, expected: string, start: number, end: number, replacement: string): Piece {
+  const host = requireTextHost(lib, id);
+  const clean = strip(host.body);
+  if (clean !== expected) throw new Error("原笔记已变化，请重新载入置顶内容后再保存。");
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > clean.length || start >= end) throw new Error("选区无效");
+  const parsed = parse(host.body);
+  if (parsed.damage.length) throw new Error("原笔记标记损坏，未写入。");
+  if (clean.slice(start, end) === replacement) return host;
+  const delta = replacement.length - (end - start);
+  const specs = flattenRivetSpecs(parsed.rivets).map(spec => {
+    if (spec.end <= start) return spec;
+    if (spec.start >= end) return { ...spec, start: spec.start + delta, end: spec.end + delta };
+    if (spec.start <= start && spec.end >= end && spec.end + delta > spec.start) return { ...spec, end: spec.end + delta };
+    throw new Error("选区内含有其他挂接边界，请返回原文编辑，避免移动其来源。");
+  });
+  return lib.save(id, add(clean.slice(0, start) + replacement + clean.slice(end), specs));
+}
+
 /**
  * M1 hang: optional persist of current clean text, write one rivet via addMark,
  * create or open the side piece, save the host.

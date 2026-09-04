@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const IPC = {
+  editExcerpt: "piece:editExcerpt",
   detachSide: "piece:detachSide",
   openLibrary: "library:open",
   openLibraryPath: "library:openPath",
@@ -17,6 +18,7 @@ const IPC = {
 };
 
 contextBridge.exposeInMainWorld("intro", {
+  editExcerpt: (id, expected, start, end, text) => ipcRenderer.invoke(IPC.editExcerpt, id, expected, start, end, text),
   detachSide: (hostId, rivetId, clean) => ipcRenderer.invoke(IPC.detachSide, hostId, rivetId, clean),
   openLibrary: () => ipcRenderer.invoke(IPC.openLibrary),
   openLibraryPath: (root) => ipcRenderer.invoke(IPC.openLibraryPath, root),

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { parse, strip } from "../marks/index.ts";
 import { Library } from "../library/index.ts";
-import { detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
+import { editExcerpt, detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "./loop.ts";
 import { HOST_EXT, OverlayError, isPdfMagic, minimalPdf } from "../pdf/index.ts";
 import {
   ROOT_ID,
@@ -30,6 +30,25 @@ afterEach(() => {
 });
 
 describe("M1 write loop on disk", () => {
+  it("pin edits update only the excerpt and shift later rivets", () => {
+    const lib = tmpLibrary();
+    const host = lib.createPiece({ body: "alpha beta gamma" });
+    const side = hangSide(lib, host.id, { start: 11, end: 16 });
+    const edited = editExcerpt(lib, host.id, "alpha beta gamma", 0, 5, "ALPHABET");
+    assert.equal(strip(edited.body), "ALPHABET beta gamma");
+    assert.equal(pieceView(edited).rivets[0].start, 14);
+    assert.equal(pieceView(edited).rivets[0].to, side.side.id);
+    assert.throws(() => editExcerpt(lib, host.id, "alpha beta gamma", 0, 5, "bad"), /已变化/);
+    assert.equal(strip(lib.load(host.id).body), "ALPHABET beta gamma");
+  });
+  it("pin edits refuse ambiguous internal rivet boundaries", () => {
+    const lib = tmpLibrary();
+    const host = lib.createPiece({ body: "alpha beta gamma" });
+    hangSide(lib, host.id, { start: 6, end: 10 });
+    const before = lib.load(host.id).body;
+    assert.throws(() => editExcerpt(lib, host.id, "alpha beta gamma", 0, 16, "replacement"), /挂接边界/);
+    assert.equal(lib.load(host.id).body, before);
+  });
   it("detaches one reused link without changing the target, its children, or other links", () => {
     const lib = tmpLibrary();
     const host = lib.createPiece({ body: "first second" });

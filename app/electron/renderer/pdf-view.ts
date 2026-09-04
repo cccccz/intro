@@ -43,6 +43,7 @@ type PdfPage = {
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
     viewport: PdfViewport;
+    transform?: number[];
   }) => { promise: Promise<void>; cancel: () => void };
 };
 
@@ -76,6 +77,7 @@ export type PdfSelection = {
 };
 
 export type PdfViewHandle = {
+  gotoAnchor: (anchor: PdfAnchor) => void;
   destroy: () => void;
   getSelection: () => PdfSelection | null;
   clearSelection: () => void;
@@ -118,12 +120,13 @@ export function forgetAllPdfDocs(): void {
   docCache.clear();
 }
 
-function loadDocument(id: string, data: ArrayBuffer | Uint8Array): Promise<PdfDocument> {
+function loadDocument(id: string, data: ArrayBuffer | Uint8Array | (() => Promise<Uint8Array>)): Promise<PdfDocument> {
   const existing = docCache.get(id);
   if (existing) {
     return existing;
   }
-  const task = loadPdfJs().then((pdfjs) => pdfjs.getDocument({ data: asBinary(data) }).promise);
+  const task = Promise.resolve(typeof data === "function" ? data() : data)
+    .then(async bytes => (await loadPdfJs()).getDocument({ data: asBinary(bytes) }).promise);
   docCache.set(id, task);
   task.catch(() => {
     if (docCache.get(id) === task) {
@@ -149,6 +152,22 @@ function pageRelativeBox(
     width: (width / viewport.width) * 100,
     height: (height / viewport.height) * 100,
   };
+}
+
+/** Render a fresh PDF region independently of the main view's virtualized canvases. */
+export async function renderPdfExcerpt(id: string, data: Uint8Array | (() => Promise<Uint8Array>), anchor: PdfAnchor): Promise<HTMLCanvasElement> {
+  const doc = await loadDocument(id, data);
+  const page = await doc.getPage(anchor.page);
+  const scale = Math.min(2, 1400 / Math.max(anchor.rect.width, anchor.rect.height, 1));
+  const viewport = page.getViewport({ scale });
+  const box = pageRelativeBox(viewport, anchor.rect);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(box.width * viewport.width / 100));
+  canvas.height = Math.max(1, Math.ceil(box.height * viewport.height / 100));
+  const context = canvas.getContext("2d")!;
+  await page.render({ canvasContext: context, viewport, transform: [1, 0, 0, 1, -box.left * viewport.width / 100, -box.top * viewport.height / 100] }).promise;
+  canvas.setAttribute("aria-label", `PDF 第 ${anchor.page} 页选区`);
+  return canvas;
 }
 
 function paintOverlays(
@@ -745,6 +764,18 @@ export async function mountPdfView(opts: {
       root.replaceChildren();
     },
     getSelection: () => selection,
+    gotoAnchor: anchor => {
+      const slot = pages[clampPage(anchor.page, pages.length) - 1];
+      if (!slot) return;
+      const box = pageRelativeBox(slot.viewport, anchor.rect);
+      root.scrollTop = slot.el.offsetTop + slot.el.offsetHeight * box.top / 100 - 20;
+      root.scrollLeft = Math.max(0, slot.el.offsetLeft + slot.el.offsetWidth * box.left / 100 - 20);
+      selection = { anchors: [anchor] };
+      paintDraft();
+      syncWindow();
+      emitPage();
+      opts.onChrome();
+    },
     clearSelection: () => {
       selection = null;
       paintDraft();

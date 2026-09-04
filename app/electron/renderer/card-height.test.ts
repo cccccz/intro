@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { locateText, textAnchor } from "./pin-model.ts";
+
+test("pin anchors relocate exact excerpts but reject missing or ambiguous sources", () => {
+  const anchor = textAnchor("before formula after", 7, 14);
+  assert.deepEqual(locateText("new before formula after", anchor), { start: 11, end: 18 });
+  assert.equal(locateText("before changed after", anchor), null);
+  assert.equal(locateText("before formula after before formula after", anchor), null);
+});
 import { CARD_HEIGHT_MAX, CARD_HEIGHT_MIN, cardHeightKey, clampCardHeight, loadCardHeight, saveCardHeight, resizeCardPair } from "./card-height.ts";
 
 test("shared edge preserves total height and respects both minimum heights", () => {

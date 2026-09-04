@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Library } from "../library/index.ts";
-import { detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
+import { editExcerpt, detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
 import type { PdfAnchor } from "../pdf/overlay.ts";
 import { IPC } from "./api.ts";
 
@@ -235,6 +235,11 @@ ipcMain.handle(IPC.detachSide, async (_e, hostId: string, rivetId: string, clean
   try {
     return { ok: true, host: pieceView(detachSide(requireLib(), hostId, rivetId, clean)) };
   } catch (err) { return fail(err); }
+});
+
+ipcMain.handle(IPC.editExcerpt, async (_e, id: string, expected: string, start: number, end: number, text: string) => {
+  try { return { ok: true, piece: pieceView(editExcerpt(requireLib(), id, expected, start, end, text)) }; }
+  catch (err) { return fail(err); }
 });
 
 app.whenReady().then(() => {

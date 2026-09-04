@@ -729,6 +729,25 @@ body.is-col-resizing .pdf-overlay {
 
 #column-nav { display: flex; gap: 6px; padding: 5px 8px; flex-shrink: 0; overflow: auto; z-index: 5; background: white; }
 #column-nav:empty { display: none; }
+.pin-board { flex: 0 0 auto; min-height: 0; background: white; position: relative; z-index: 5; }
+.pin-board[hidden] { display: none; }
+.pin-toggle { margin: 2px 8px; padding: 2px 6px; font-size: 11px; color: var(--muted); border: 0; }
+.pin-strip { display: flex; overflow-x: auto; overflow-y: hidden; min-height: 0; }
+.pin-cell { flex: 0 0 auto; position: relative; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); }
+.pin-head { display: flex; align-items: center; flex: 0 0 auto; gap: 3px; padding: 3px 8px; }
+.pin-head span { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin-head button { font-size: 11px; padding: 2px 4px; }
+.pin-cell .pin-content { position: static; flex: 1; min-height: 0; overflow: auto; padding: 4px 12px; font-size: 15px; }
+.pin-content p { margin: .4em 0; }
+.pin-content canvas { display: block; width: 100%; height: auto; margin-bottom: 6px; }
+.pin-editor { flex: 1; min-height: 0; resize: none; margin: 4px 8px; padding: 6px; font: 14px/1.5 ui-monospace, monospace; }
+.pin-editor[hidden], .pin-content[hidden], .pin-head button[hidden] { display: none; }
+.pin-status { flex: 0 0 auto; font-size: 11px; color: var(--muted); padding: 0 8px; }
+.pin-status:empty { display: none; }
+.pin-height-split { height: 6px; background: var(--line); cursor: ns-resize; }
+.pin-width-split { position: absolute; right: 0; top: 0; bottom: 0; width: 5px; cursor: ew-resize; }
+.pin-height-split:hover, .pin-width-split:hover { background: #93c5fd; }
+.pin-board.collapsed .pin-strip, .pin-board.collapsed .pin-height-split { display: none; }
 #column-nav button[aria-current="true"] { color: #2563eb; background: #eff6ff; }
 
 .card-resize {

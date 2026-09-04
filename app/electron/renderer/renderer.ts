@@ -9,6 +9,8 @@ import { highlightHtml } from "./highlight.ts";
 import { orderCards } from "./card-order.ts";
 import { cardHeightKey, clampCardHeight, loadCardHeight, saveCardHeight, resizeCardPair } from "./card-height.ts";
 import { readingKey } from "./pdf-reading.ts";
+import { PinBoard, type Pin } from "./pins.ts";
+import { locateText, mapRenderedBlocks, renderedSelection } from "./pin-model.ts";
 import {
   COLUMN_MIN,
   bindVSplitter,
@@ -29,6 +31,8 @@ import {
 import {
   forgetAllPdfDocs,
   mountPdfView,
+  renderPdfExcerpt,
+  type PdfAnchor,
   type OverlayRivet,
   type PdfOutlineEntry,
   type PdfViewHandle,
@@ -70,6 +74,7 @@ type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: string };
 
 type IntroApi = {
+  editExcerpt: (id: string, expected: string, start: number, end: number, text: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   detachSide: (hostId: string, rivetId: string, clean?: string) => Promise<Ok<{ host: PieceDto }> | Err>;
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
@@ -267,6 +272,78 @@ function showColumnWindow(start: number): void {
   scheduleChrome();
 }
 let pendingPdfPage: { nodeId: string; page: number } | null = null;
+let pendingPinAnchor: { pieceId: string; anchor: PdfAnchor } | null = null;
+
+const pinBoard = new PinBoard(el.board, {
+  layout: scheduleChrome,
+  load: async id => {
+    // Flush local drafts before editing a projection of the same source.
+    const surfaces = Array.from(el.columns.querySelectorAll<HTMLElement>("[data-piece-id]")).filter(surface => surface.dataset.pieceId === id);
+    const editor = surfaces.map(surface => surface.querySelector<HTMLTextAreaElement>("textarea.editor")).find(editor => editor && editor.value !== state.views[id]?.clean);
+    if (editor) {
+      const timer = persistTimers.get(id);
+      if (timer !== undefined) window.clearTimeout(timer);
+      persistTimers.delete(id);
+      const saved = await window.intro.persistClean(id, editor.value);
+      if (!saved.ok) throw new Error(saved.error);
+      pinBoard.sourceChanged(id, state.views[id]?.clean ?? saved.piece.clean, saved.piece.clean);
+      state.views[id] = saved.piece;
+    }
+    const result = await window.intro.loadPiece(id);
+    if (!result.ok) throw new Error(result.error);
+    return result.piece;
+  },
+  edit: async (id, expected, start, end, text) => {
+    const surfaces = Array.from(el.columns.querySelectorAll<HTMLElement>("[data-piece-id]")).filter(surface => surface.dataset.pieceId === id);
+    if (surfaces.some(surface => {
+      const editor = surface.querySelector<HTMLTextAreaElement>("textarea.editor");
+      return editor && editor.value !== expected;
+    })) throw new Error("原笔记编辑区已变化。请取消并重新打开置顶编辑，合并最新内容。");
+    const result = await window.intro.editExcerpt(id, expected, start, end, text);
+    if (!result.ok) throw new Error(result.error);
+    pinBoard.sourceChanged(id, expected, result.piece.clean);
+    state.views[id] = result.piece;
+    for (const surface of surfaces) {
+      const editor = surface.querySelector<HTMLTextAreaElement>("textarea.editor");
+      if (editor) editor.value = result.piece.clean;
+      paintSurface(surface);
+    }
+    scheduleChrome();
+    return result.piece;
+  },
+  pdf: async (id, anchor) => {
+    return renderPdfExcerpt(id, async () => {
+      const result = await window.intro.readPdf(id);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
+    }, anchor);
+  },
+  reveal: async (pin: Pin) => {
+    let node = state.nodes.find(node => node.id === pin.nodeId && node.pieceId === pin.sourceId) ?? state.nodes.find(node => node.pieceId === pin.sourceId);
+    if (!node) {
+      if (pin.kind === "pdf") pendingPinAnchor = { pieceId: pin.sourceId, anchor: pin.anchors[0] };
+      await openRootPiece(pin.sourceId);
+      node = state.nodes.find(node => node.pieceId === pin.sourceId);
+    }
+    if (!node) throw new Error("来源无法打开");
+    showColumnWindow(Math.max(0, node.depth - 2));
+    if (pin.kind === "pdf") {
+      const handle = pdfViews.get(node.id);
+      if (handle) handle.gotoAnchor(pin.anchors[0]);
+      else pendingPinAnchor = { pieceId: pin.sourceId, anchor: pin.anchors[0] };
+    } else {
+      const surface = surfaceOf(node.id);
+      const editor = surface?.querySelector<HTMLTextAreaElement>("textarea.editor");
+      if (!surface || !editor) throw new Error("来源暂不可见");
+      const range = locateText(editor.value, pin.anchor);
+      if (!range) throw new Error("来源选区已变化，请重新选择。");
+      applyMode(surface, "source");
+      editor.focus(); editor.setSelectionRange(range.start, range.end);
+      const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 24;
+      editor.scrollTop = Math.max(0, (editor.value.slice(0, range.start).split("\n").length - 2) * lineHeight);
+    }
+  },
+});
 
 function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
@@ -611,6 +688,7 @@ function paintRendered(surface: HTMLElement): void {
     openRivetIds(state.nodes, nodeId),
     katexMath,
   );
+  mapRenderedBlocks(pane, editor.value);
   pane.querySelectorAll("mark[data-rivet]").forEach((mark) => {
     const rivetId = (mark as HTMLElement).dataset.rivet;
     if (!rivetId) {
@@ -828,6 +906,7 @@ function drawWires(): void {
 
 function applyLibrary(library: LibraryDto): void {
   state.root = library.root;
+  pinBoard.setLibrary(library.root);
   state.pieces = library.pieces;
   el.libPath.textContent = library.root;
   el.libPath.title = library.root;
@@ -1082,7 +1161,17 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   };
   body.addEventListener("contextmenu", (ev) => {
     const sourceOn = modeOf(node.id) !== "rendered";
+    const selected = sourceOn
+      ? { start: editor.selectionStart, end: editor.selectionEnd, expanded: false }
+      : renderedSelection(rendered, editor.value);
     showCtxMenu(ev, [
+      {
+        label: selected?.expanded ? "置顶选区（完整公式／段落）" : "置顶选区",
+        disabled: !selected || selected.start === selected.end,
+        run: () => {
+          if (selected) pinBoard.addText(node.pieceId, node.id, titleOf(node.pieceId), editor.value, selected.start, selected.end);
+        },
+      },
       {
         label: sourceOn ? "✓ Source" : "Source",
         run: () => {
@@ -1350,11 +1439,19 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   surface.append(chrome, body);
 
   pane.addEventListener("contextmenu", (ev) => {
+    const pinnedSelection = pdfViews.get(node.id)?.getSelection();
     const hasSel = Boolean(pdfViews.get(node.id)?.getSelection()?.anchors.length);
     if (!hasSel) {
       setStatus("Drag a region on the PDF first.", true);
     }
     showCtxMenu(ev, [
+      {
+        label: "置顶选区",
+        disabled: !pinnedSelection?.anchors.length,
+        run: () => {
+          if (pinnedSelection) pinBoard.addPdf(node.pieceId, node.id, titleOf(node.pieceId), structuredClone(pinnedSelection.anchors));
+        },
+      },
       {
         label: "New side",
         disabled: !hasSel,
@@ -1468,6 +1565,10 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     });
     pdfViews.get(node.id)?.destroy();
     pdfViews.set(node.id, handle);
+    if (pendingPinAnchor?.pieceId === node.pieceId) {
+      handle.gotoAnchor(pendingPinAnchor.anchor);
+      pendingPinAnchor = null;
+    }
     if (pendingPdfPage?.nodeId === node.id) {
       handle.gotoPage(pendingPdfPage.page);
       pendingPdfPage = null;
@@ -1745,12 +1846,14 @@ function flushPersist(id: string, editor: HTMLTextAreaElement): void {
 }
 
 async function persistNow(id: string, clean: string): Promise<void> {
+  const before = state.views[id]?.clean;
   const result = await window.intro.persistClean(id, clean);
   if (!result.ok) {
     setStatus(result.error, true);
     return;
   }
   state.views[id] = result.piece;
+  if (before !== undefined) pinBoard.sourceChanged(id, before, result.piece.clean);
   el.columns.querySelectorAll(`[data-piece-id="${CSS.escape(id)}"]`).forEach((node) => {
     const surface = node as HTMLElement;
     const editor = surface.querySelector("textarea.editor") as HTMLTextAreaElement | null;
