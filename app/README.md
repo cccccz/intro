@@ -28,19 +28,19 @@ npm run app -- --library /path/to/library
 
 1. **Open library**：选一个本地文件夹。空文件夹就是新库。
 2. **New piece**：可填显示名，建 `{id}.intro.md`。`{id}` 是文件名主干，也是铆点 `to=`，改名不会改它。列表/卡片主标签是 `title:`；空标题则用短 id 或挂上来的选区摘录。完整 id 只在小号/tooltip。**Rename** 只改文首 YAML `title:`，`persistClean` / `addMark` 保留这段 frontmatter。
-3. 每列/每张卡片可切 **Source** 和 **Rendered**。Source 是这篇的权威面（做法 A：铆点标记在 `{id}.intro.md`）。屏幕上编辑的是清除后的干净正文（`$...$` 仍是源文）；`persistClean` / `addMark` 只走 Source，落盘仍带 `<<r>>` 标记，不写 HTML。Rendered 是同一篇的只读投影，不是第二份正文。顺序是 **先 parse/strip 铆点，再对干净正文做 markdown**（`**` / `#` 等不得拆 `<<r>>` 定界符）。子集：标题、列表、粗体/斜体、链接、行内代码、围栏代码、引用，以及 `$...$` / `$$...$$`（KaTeX）。不渲染原文 HTML 或图片。高亮与导线是视图像，不写入源文。
-4. **划选一段**，点 **New side**：用 `addMark` 往宿主写入 `<<r id="…" to="…">>…<</r id="…">>`，并新建一篇侧边，作为下一列打开。视图像标出该选区，并有导线连到打开的侧边卡片（几何不落盘）。Rendered 里点 New side 会回到 Source 再划。
-5. 在侧边里再划、再挂（d2）。列 = 深度；同一宿主上多个打开的铆点叠在该层 panel 里（多张卡片），不互相顶掉。高亮与导线随滚动/窗口缩放更新。源高亮滚出该列视口则不画对应侧边卡片（不是合上）；侧列仍占位，列宽不因此变化。
-6. **Hang existing…** 把选区挂到库里已有的一篇（复用）。点铆点条目则打开已挂的侧边；已打开的再点一次只对准该卡片。
+3. 每列可在编辑区 **右键** 切 **Source** / **Rendered**。Source 是这篇的权威面（做法 A：铆点标记在 `{id}.intro.md`）。屏幕上编辑的是清除后的干净正文（`$...$` 仍是源文）；`persistClean` / `addMark` 只走 Source，落盘仍带 `<<r>>` 标记，不写 HTML。Rendered 是同一篇的只读投影，不是第二份正文。顺序是 **先 parse/strip 铆点，再对干净正文做 markdown**（`**` / `#` 等不得拆 `<<r>>` 定界符）。子集：标题、列表、粗体/斜体、链接、行内代码、围栏代码、引用，以及 `$...$` / `$$...$$`（KaTeX）。不渲染原文 HTML 或图片。高亮与导线是视图像，不写入源文。
+4. **划选一段**，右键 **New side**：用 `addMark` 往宿主写入 `<<r id="…" to="…">>…<</r id="…">>`，并新建一篇侧边，作为下一列打开。视图像标出该选区，并有导线连到打开的侧边卡片（几何不落盘）。Rendered 里右键 New side 会回到 Source 再划。再点高亮或 Rendered 里的 `mark` 即 Close 该侧边（钉点留盘）。
+5. 在侧边里再划、再挂（d2）。列 = 深度；同一宿主上多个打开的铆点叠在该层 panel 里（多张卡片），不互相顶掉。高亮与导线随滚动/窗口缩放更新。源高亮滚出该列视口则不画对应侧边卡片（不是合上）；侧列仍占位，列宽不因此变化。侧边不列出 rivets。
+6. 右键 **Hang existing…** 把选区挂到库里已有的一篇（复用）。PDF 顶栏 **Rivets** 可跳到锚点并开/关已挂侧边。
 7. **Close** 只从画面拿掉该卡片及其子树；磁盘上的铆点和篇还在。合上宿主列则收起整条链。**Delete** 确认后从库里删这篇文本侧边、拆父钉点，并级联删没有其他钉点指向的子篇。PDF 宿主不能从这里删。
-8. **Open PDF…**：把本地 PDF **复制**进库（不改原文件、也不往副本里写 Annot）。左列是 PDF.js 渲染（render-first）。默认标题是原文件名，可 **Rename**。在页上**拖出一块区域**，再 **New side**：侧边仍是 `{id}.intro.md`，可切 Source/Rendered、再划再挂（d2）。高亮和导线走同一套 `rivetId → rects`（overlay 画 `[data-rivet]`）。
+8. **Open PDF…**：把本地 PDF **复制**进库（不改原文件、也不往副本里写 Annot）。左列是 PDF.js 渲染（render-first）。默认标题是原文件名，可 **Rename**。在页上**拖出一块区域**，右键 **New side**：侧边仍是 `{id}.intro.md`，可右键切 Source/Rendered、再划再挂（d2）。高亮和导线走同一套 `rivetId → rects`（overlay 画 `[data-rivet]`）。再点高亮收起该侧边。
 
 PDF 列顶栏：
 
 - **Zoom**：`−` / `+` 以「适宽」为 100% 加减（0.25×–4×）。**Fit width** 回到适宽。缩放会重算每页占位高度，只重新 raster 当前可见窗口（overscan 仍是 ±2）。
 - **Page**：输入页码回车，滚到该页占位并保证它进入 raster 窗口。
-- **Outline**：若 PDF 自带书签（`getOutline`），点条目跳到对应页；没有书签则显示 No outline。
-- **Rivets**：overlay 铆点列表在顶栏弹出，不占 PDF 下方常驻高度。点条目滚到该锚所在页，并打开已挂的侧边。
+- **Outline**：点开后在 PDF 页上盖一层目录。有书签则点条目跳页；没有则按钮禁用（No outline）。再点 Outline、点页面空白或 Esc 关闭。
+- **Rivets**：overlay 铆点列表在顶栏弹出。点条目滚到该锚所在页，并打开或收起已挂的侧边。
 
 分栏：PIECES 与板、列与列之间（含最右列右侧）可拖分割条，手柄约 6px，悬停高亮。宿主列默认占满剩余宽度；拖过之后宽度记在 `localStorage`（`intro:chrome-layout:v1`），个人自用。
 

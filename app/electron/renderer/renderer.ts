@@ -6,6 +6,7 @@ import {
   type AnchorRect,
 } from "./geometry.ts";
 import { highlightHtml } from "./highlight.ts";
+import { orderCards } from "./card-order.ts";
 import {
   COLUMN_MIN,
   bindVSplitter,
@@ -362,6 +363,110 @@ function setStatus(text: string, danger = false): void {
   el.status.classList.toggle("danger", danger);
 }
 
+type CtxItem = {
+  label: string;
+  disabled?: boolean;
+  run: () => void;
+};
+
+let ctxMenu: HTMLElement | null = null;
+
+function hideCtxMenu(): void {
+  ctxMenu?.remove();
+  ctxMenu = null;
+}
+
+function showCtxMenu(ev: MouseEvent, items: readonly CtxItem[]): void {
+  ev.preventDefault();
+  ev.stopPropagation();
+  hideCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.setAttribute("role", "menu");
+  for (const item of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("role", "menuitem");
+    btn.textContent = item.label;
+    btn.disabled = Boolean(item.disabled);
+    btn.addEventListener("click", () => {
+      hideCtxMenu();
+      item.run();
+    });
+    menu.append(btn);
+  }
+  document.body.append(menu);
+  ctxMenu = menu;
+  const pad = 8;
+  const x = Math.min(ev.clientX, window.innerWidth - menu.offsetWidth - pad);
+  const y = Math.min(ev.clientY, window.innerHeight - menu.offsetHeight - pad);
+  menu.style.left = `${Math.max(pad, x)}px`;
+  menu.style.top = `${Math.max(pad, y)}px`;
+}
+
+function promptExistingSide(excludeId: string, textOnly: boolean): Promise<string | null> {
+  const listed = state.pieces.filter(
+    (p) => p.id !== excludeId && (!textOnly || p.medium === "text"),
+  );
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "piece-picker";
+    const heading = document.createElement("h2");
+    heading.id = "piece-picker-heading";
+    heading.textContent = "挂接已有笔记";
+    dialog.setAttribute("aria-labelledby", heading.id);
+    const search = document.createElement("input");
+    search.type = "search";
+    search.placeholder = "搜索标题或正文";
+    search.setAttribute("aria-label", search.placeholder);
+    const list = document.createElement("div");
+    list.className = "piece-picker-list";
+    const cancel = document.createElement("button");
+    cancel.textContent = "取消";
+    let selected: string | null = null;
+    cancel.onclick = () => dialog.close();
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      resolve(selected);
+    }, { once: true });
+    const previews = new Map<string, string>();
+    const paint = (): void => {
+      list.replaceChildren();
+      const query = search.value.trim().toLocaleLowerCase();
+      for (const piece of listed) {
+        const preview = previews.get(piece.id) ?? (piece.medium === "pdf" ? "PDF" : "正在加载正文…");
+        if (!`${piece.title} ${preview}`.toLocaleLowerCase().includes(query)) continue;
+        const button = document.createElement("button");
+        const title = document.createElement("strong");
+        title.textContent = piece.title;
+        const text = document.createElement("span");
+        text.textContent = preview.slice(0, 180) || "（空笔记）";
+        button.append(title, text);
+        button.onclick = () => { selected = piece.id; dialog.close(); };
+        list.append(button);
+      }
+      if (!list.childElementCount) list.textContent = listed.length ? "没有匹配的笔记" : "暂无可挂接的笔记";
+    };
+    search.oninput = paint;
+    dialog.append(heading, search, list, cancel);
+    document.body.append(dialog);
+    paint();
+    dialog.showModal();
+    search.focus();
+    void (async () => {
+      for (const piece of listed) {
+        if (!dialog.isConnected) return;
+        if (piece.medium === "pdf") continue;
+        try {
+          const result = await window.intro.loadPiece(piece.id);
+          previews.set(piece.id, result.ok ? result.piece.clean : "正文加载失败");
+        } catch { previews.set(piece.id, "正文加载失败"); }
+        if (dialog.isConnected) paint();
+      }
+    })();
+  });
+}
+
 function quoteOf(clean: string, start: number, end: number): string {
   const slice = clean.slice(start, end).replace(/\s+/g, " ").trim();
   if (slice.length <= 24) {
@@ -434,6 +539,18 @@ function paintRendered(surface: HTMLElement): void {
     openRivetIds(state.nodes, nodeId),
     katexMath,
   );
+  pane.querySelectorAll("mark[data-rivet]").forEach((mark) => {
+    const rivetId = (mark as HTMLElement).dataset.rivet;
+    if (!rivetId) {
+      return;
+    }
+    mark.addEventListener("pointerenter", () => {
+      setHot(rivetId);
+    });
+    mark.addEventListener("pointerleave", () => {
+      setHot(null);
+    });
+  });
 }
 
 function paintSurface(surface: HTMLElement): void {
@@ -518,9 +635,10 @@ function sortStacks(): void {
       const yb = hb && nb?.viaRivetId ? (rectsForRivet(hb, nb.viaRivetId)[0]?.top ?? 0) : 0;
       return ya - yb;
     });
-    for (const card of cards) {
-      stack.append(card);
-    }
+    // Electron 37 supports atomic DOM moves; TypeScript's DOM lib lacks the declaration.
+    orderCards<Element>(stack as Element & {
+      moveBefore(node: Element, before: Element | null): void;
+    }, cards);
   }
 }
 
@@ -838,107 +956,116 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
 
   body.append(stack, rendered);
 
-  const tools = document.createElement("div");
-  tools.className = "column-tools";
-  const modes = document.createElement("div");
-  modes.className = "mode-switch";
-  modes.setAttribute("role", "tablist");
-  modes.setAttribute("aria-label", "Body view");
-  for (const mode of ["source", "rendered"] as const) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.dataset.mode = mode;
-    btn.setAttribute("role", "tab");
-    btn.textContent = mode === "source" ? "Source" : "Rendered";
-    btn.addEventListener("click", () => {
-      applyMode(surface, mode);
-      if (mode === "source") {
-        editor.focus();
-      }
-    });
-    modes.append(btn);
-  }
-  const newSide = document.createElement("button");
-  newSide.type = "button";
-  newSide.textContent = "New side";
-  newSide.disabled = Boolean(view && view.damage.length > 0);
-  newSide.addEventListener("click", () => {
+  const damaged = Boolean(view && view.damage.length > 0);
+  const hangFromHere = (sideId: string | undefined): void => {
     if (modeOf(node.id) === "rendered") {
       applyMode(surface, "source");
       editor.focus();
-      setStatus("Select a span in source, then New side.");
+      setStatus(
+        sideId
+          ? "Select a span in source, then hang an existing piece."
+          : "Select a span in source, then New side.",
+      );
       return;
     }
-    void hangFromEditor(node.id, editor, undefined);
+    void hangFromEditor(node.id, editor, sideId);
+  };
+  body.addEventListener("contextmenu", (ev) => {
+    const sourceOn = modeOf(node.id) !== "rendered";
+    showCtxMenu(ev, [
+      {
+        label: sourceOn ? "✓ Source" : "Source",
+        run: () => {
+          applyMode(surface, "source");
+          editor.focus();
+        },
+      },
+      {
+        label: sourceOn ? "Rendered" : "✓ Rendered",
+        run: () => {
+          applyMode(surface, "rendered");
+        },
+      },
+      {
+        label: "New side",
+        disabled: damaged,
+        run: () => {
+          hangFromHere(undefined);
+        },
+      },
+      {
+        label: "Hang existing…",
+        disabled: damaged,
+        run: async () => {
+          const start = editor.selectionStart;
+          const end = editor.selectionEnd;
+          const sideId = await promptExistingSide(node.pieceId, false);
+          if (sideId) {
+            editor.setSelectionRange(start, end);
+            hangFromHere(sideId);
+          }
+        },
+      },
+    ]);
   });
-  const hangExisting = document.createElement("button");
-  hangExisting.type = "button";
-  hangExisting.textContent = "Hang existing…";
-  hangExisting.disabled = Boolean(view && view.damage.length > 0);
-  hangExisting.addEventListener("click", () => {
-    if (modeOf(node.id) === "rendered") {
-      applyMode(surface, "source");
-      editor.focus();
-      setStatus("Select a span in source, then hang an existing piece.");
+  rendered.addEventListener("click", (ev) => {
+    const mark = (ev.target as HTMLElement).closest("mark[data-rivet]") as HTMLElement | null;
+    const rivetId = mark?.dataset.rivet;
+    if (!rivetId) {
       return;
     }
-    const listed = state.pieces.filter((p) => p.id !== node.pieceId);
-    const hintIds = listed.map((p) => `${p.title} (${p.id})`).slice(0, 8).join(", ");
-    const sideId = window.prompt(
-      hintIds ? `Piece id to reuse as the side.\n${hintIds}` : "Piece id to reuse as the side (to=)",
-      listed[0]?.id ?? "",
-    );
-    if (!sideId) {
-      return;
+    const spec = state.views[node.pieceId]?.rivets.find((r) => r.id === rivetId);
+    if (spec?.to) {
+      void toggleSideColumn(node.id, spec.to, spec.id);
     }
-    void hangFromEditor(node.id, editor, sideId.trim());
   });
-  tools.append(modes, newSide, hangExisting);
 
-  const rivets = document.createElement("div");
-  rivets.className = "rivets";
-  const h = document.createElement("h3");
-  h.textContent = view && view.damage.length > 0
-    ? `Damaged (${view.damage.map((d) => d.kind).join(", ")})`
-    : `Rivets (${view?.rivets.length ?? 0})`;
-  rivets.append(h);
-  const openIds = new Set(openRivetIds(state.nodes, node.id));
-  if (view) {
-    for (const rivet of view.rivets) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "rivet";
-      btn.dataset.rivet = rivet.id;
-      btn.classList.toggle("open", openIds.has(rivet.id));
-      const quote = document.createElement("span");
-      quote.className = "quote";
-      quote.textContent = `「${quoteOf(view.clean, rivet.start, rivet.end)}」`;
-      const to = document.createElement("span");
-      to.className = "muted rivet-to";
-      if (rivet.to) {
-        to.dataset.to = rivet.to;
-        to.textContent = `→ ${titleOf(rivet.to)}`;
-      } else {
-        to.textContent = "(no side)";
-      }
-      btn.append(quote, to);
-      btn.disabled = !rivet.to;
-      btn.addEventListener("pointerenter", () => {
-        setHot(rivet.id);
-      });
-      btn.addEventListener("pointerleave", () => {
-        setHot(null);
-      });
-      btn.addEventListener("click", () => {
+  surface.append(body);
+  if (node.depth === 0) {
+    const rivets = document.createElement("div");
+    rivets.className = "rivets";
+    const heading = document.createElement("h3");
+    heading.textContent = damaged
+      ? `Damaged (${view!.damage.map((d) => d.kind).join(", ")})`
+      : `Rivets (${view?.rivets.length ?? 0})`;
+    rivets.append(heading);
+    const openIds = new Set(openRivetIds(state.nodes, node.id));
+    if (view) {
+      for (const rivet of view.rivets) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "rivet";
+        btn.dataset.rivet = rivet.id;
+        btn.classList.toggle("open", openIds.has(rivet.id));
+        const quote = document.createElement("span");
+        quote.className = "quote";
+        quote.textContent = `「${quoteOf(view.clean, rivet.start, rivet.end)}」`;
+        const to = document.createElement("span");
+        to.className = "muted rivet-to";
         if (rivet.to) {
-          void openSideColumn(node.id, rivet.to, rivet.id);
+          to.dataset.to = rivet.to;
+          to.textContent = `→ ${titleOf(rivet.to)}`;
+        } else {
+          to.textContent = "(no side)";
         }
-      });
-      rivets.append(btn);
+        btn.append(quote, to);
+        btn.disabled = !rivet.to;
+        btn.addEventListener("pointerenter", () => {
+          setHot(rivet.id);
+        });
+        btn.addEventListener("pointerleave", () => {
+          setHot(null);
+        });
+        btn.addEventListener("click", () => {
+          if (rivet.to) {
+            void toggleSideColumn(node.id, rivet.to, rivet.id);
+          }
+        });
+        rivets.append(btn);
+      }
     }
+    surface.append(rivets);
   }
-
-  surface.append(body, tools, rivets);
   applyMode(surface, modeOf(node.id));
   return editor;
 }
@@ -983,7 +1110,7 @@ function appendRivetButtons(
     btn.addEventListener("click", () => {
       onJump?.(rivet.id, rivet.page);
       if (rivet.to) {
-        void openSideColumn(node.id, rivet.to, rivet.id);
+        void toggleSideColumn(node.id, rivet.to, rivet.id);
       }
     });
     rivetsEl.append(btn);
@@ -1004,7 +1131,11 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   const pane = document.createElement("div");
   pane.className = "body-pdf";
   pane.addEventListener("scroll", scheduleChrome);
-  body.append(pane);
+  const drawer = document.createElement("nav");
+  drawer.className = "pdf-outline-drawer";
+  drawer.hidden = true;
+  drawer.setAttribute("aria-label", "Outline");
+  body.append(pane, drawer);
 
   const chrome = document.createElement("div");
   chrome.className = "pdf-chrome";
@@ -1034,12 +1165,16 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   pageOf.className = "muted";
   pageOf.textContent = " / ?";
   pageLabel.append(pageInput, pageOf);
-  const outline = document.createElement("details");
-  outline.className = "pdf-outline pdf-menu";
-  const outlineSummary = document.createElement("summary");
-  outlineSummary.textContent = "Outline";
-  const outlineNav = document.createElement("nav");
-  outline.append(outlineSummary, outlineNav);
+  const outlineBtn = document.createElement("button");
+  outlineBtn.type = "button";
+  outlineBtn.className = "pdf-outline-btn";
+  outlineBtn.textContent = "Outline";
+  outlineBtn.setAttribute("aria-expanded", "false");
+  const setOutlineOpen = (on: boolean): void => {
+    drawer.hidden = !on;
+    outlineBtn.classList.toggle("on", on);
+    outlineBtn.setAttribute("aria-expanded", on ? "true" : "false");
+  };
 
   const overlayCount = view?.overlayRivets.length ?? 0;
   const rivetMenu = document.createElement("details");
@@ -1073,43 +1208,18 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     );
   }
   rivetMenu.append(rivetSummary, rivetNav);
-
-  const newSide = document.createElement("button");
-  newSide.type = "button";
-  newSide.textContent = "New side";
-  newSide.title = "Drag a region, then New side. Overlay only — PDF bytes stay untouched.";
-  newSide.addEventListener("click", () => {
-    void hangFromPdf(node.id, undefined);
-  });
-  const hangExisting = document.createElement("button");
-  hangExisting.type = "button";
-  hangExisting.textContent = "Hang existing…";
-  hangExisting.addEventListener("click", () => {
-    const listed = state.pieces.filter((p) => p.id !== node.pieceId && p.medium === "text");
-    const hintIds = listed.map((p) => `${p.title} (${p.id})`).slice(0, 8).join(", ");
-    const sideId = window.prompt(
-      hintIds ? `Piece id to reuse as the side.\n${hintIds}` : "Piece id to reuse as the side (to=)",
-      listed[0]?.id ?? "",
-    );
-    if (!sideId) {
+  outlineBtn.addEventListener("click", () => {
+    if (outlineBtn.disabled) {
       return;
     }
-    void hangFromPdf(node.id, sideId.trim());
+    rivetMenu.open = false;
+    setOutlineOpen(drawer.hidden);
   });
-
-  const exclusiveMenus = [outline, rivetMenu];
-  for (const menu of exclusiveMenus) {
-    menu.addEventListener("toggle", () => {
-      if (!menu.open) {
-        return;
-      }
-      for (const other of exclusiveMenus) {
-        if (other !== menu) {
-          other.open = false;
-        }
-      }
-    });
-  }
+  rivetMenu.addEventListener("toggle", () => {
+    if (rivetMenu.open) {
+      setOutlineOpen(false);
+    }
+  });
 
   chrome.append(
     zoomOutBtn,
@@ -1117,13 +1227,68 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     zoomInBtn,
     fitBtn,
     pageLabel,
-    outline,
+    outlineBtn,
     rivetMenu,
-    newSide,
-    hangExisting,
   );
 
   surface.append(chrome, body);
+
+  pane.addEventListener("contextmenu", (ev) => {
+    const hasSel = Boolean(pdfViews.get(node.id)?.getSelection()?.anchors.length);
+    if (!hasSel) {
+      setStatus("Drag a region on the PDF first.", true);
+    }
+    showCtxMenu(ev, [
+      {
+        label: "New side",
+        disabled: !hasSel,
+        run: () => {
+          void hangFromPdf(node.id, undefined);
+        },
+      },
+      {
+        label: "Hang existing…",
+        disabled: !hasSel,
+        run: async () => {
+          const sideId = await promptExistingSide(node.pieceId, true);
+          if (sideId) {
+            void hangFromPdf(node.id, sideId);
+          }
+        },
+      },
+    ]);
+  });
+
+  const onOutlinePointer = (ev: PointerEvent): void => {
+    if (!drawer.isConnected) {
+      document.removeEventListener("pointerdown", onOutlinePointer);
+      window.removeEventListener("keydown", onOutlineKey);
+      return;
+    }
+    if (drawer.hidden) {
+      return;
+    }
+    const target = ev.target as Node;
+    if (drawer.contains(target) || outlineBtn.contains(target)) {
+      return;
+    }
+    setOutlineOpen(false);
+  };
+  const onOutlineKey = (ev: KeyboardEvent): void => {
+    if (!drawer.isConnected) {
+      document.removeEventListener("pointerdown", onOutlinePointer);
+      window.removeEventListener("keydown", onOutlineKey);
+      return;
+    }
+    if (ev.key === "Escape") {
+      hideCtxMenu();
+      if (!drawer.hidden) {
+        setOutlineOpen(false);
+      }
+    }
+  };
+  document.addEventListener("pointerdown", onOutlinePointer);
+  window.addEventListener("keydown", onOutlineKey);
 
   const paintOutline = (items: PdfOutlineEntry[], parent: HTMLElement, goto: (page: number) => void): void => {
     const ul = document.createElement("ul");
@@ -1174,7 +1339,7 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
       onRivetClick: (id) => {
         const rivet = state.views[node.pieceId]?.overlayRivets.find((r) => r.id === id);
         if (rivet?.to) {
-          void openSideColumn(node.id, rivet.to, rivet.id);
+          void toggleSideColumn(node.id, rivet.to, rivet.id);
         }
       },
       onPageChange: (page, numPages) => {
@@ -1225,13 +1390,15 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
       }
     });
     const items = await handle.getOutline();
-    outlineNav.replaceChildren();
+    drawer.replaceChildren();
     if (items.length === 0) {
-      outlineSummary.textContent = "No outline";
-      outline.setAttribute("data-empty", "1");
+      outlineBtn.textContent = "No outline";
+      outlineBtn.disabled = true;
+      setOutlineOpen(false);
     } else {
-      outlineSummary.textContent = "Outline";
-      paintOutline(items, outlineNav, (page) => {
+      outlineBtn.textContent = "Outline";
+      outlineBtn.disabled = false;
+      paintOutline(items, drawer, (page) => {
         handle.gotoPage(page);
       });
     }
@@ -1301,12 +1468,10 @@ function renderCard(node: OpenNode): HTMLElement {
   const name = document.createElement("strong");
   name.className = "piece-title";
   name.textContent = titleOf(node.pieceId, excerptFor(node));
-  name.title = view?.path ?? node.pieceId;
-  const id = document.createElement("span");
-  id.className = "id piece-id";
-  id.textContent = node.pieceId;
-  id.title = node.pieceId;
-  titles.append(name, id);
+  name.title = [titleOf(node.pieceId, excerptFor(node)), node.pieceId, view?.path]
+    .filter(Boolean)
+    .join("\n");
+  titles.append(name);
   if (parent) {
     const from = document.createElement("div");
     from.className = "from";
@@ -1531,6 +1696,23 @@ async function openRootPiece(id: string): Promise<void> {
   );
 }
 
+async function toggleSideColumn(
+  parentId: string,
+  pieceId: string,
+  rivetId: string,
+): Promise<void> {
+  const already = state.nodes.find((n) => n.parentId === parentId && n.viaRivetId === rivetId);
+  if (already) {
+    state.nodes = closeNode(state.nodes, already.id);
+    renderSidebar();
+    renderColumns();
+    setHot(null);
+    setStatus("Closed this side and its subtree. Rivets stay on disk.");
+    return;
+  }
+  await openSideColumn(parentId, pieceId, rivetId);
+}
+
 async function openSideColumn(
   parentId: string,
   pieceId: string,
@@ -1616,6 +1798,16 @@ window.intro.onLibraryOpened((library) => {
 
 el.columns.addEventListener("scroll", scheduleChrome);
 window.addEventListener("resize", scheduleChrome);
+window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    hideCtxMenu();
+  }
+});
+document.addEventListener("pointerdown", (ev) => {
+  if (ctxMenu && !ctxMenu.contains(ev.target as Node)) {
+    hideCtxMenu();
+  }
+});
 new ResizeObserver(scheduleChrome).observe(el.board);
 
 bindVSplitter(el.splitSidebar, {

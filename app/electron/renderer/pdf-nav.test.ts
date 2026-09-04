@@ -10,7 +10,39 @@ import {
   parsePageInput,
   zoomIn,
   zoomOut,
+  readingOffset,
+  readingScrollTop,
 } from "./pdf-nav.ts";
+import { currentPageFromScroll } from "./pdf-window.ts";
+
+describe("PDF reading position on resize", () => {
+  it("keeps page 200 at 40 percent through repeated width changes", () => {
+    const tops = (height: number) => Array.from({ length: 1401 }, (_, i) => 4 + i * (height + 10));
+    let height = 1000;
+    let scroll = tops(height)[199] + height * 0.4;
+    for (const next of [600, 1200, 450, 1000]) {
+      const before = tops(height);
+      const page = currentPageFromScroll(before, before.map(() => height), scroll, 500);
+      assert.equal(page, 200);
+      const anchor = readingOffset(before[page - 1], height, scroll);
+      const after = tops(next);
+      scroll = readingScrollTop(after[page - 1], next, anchor);
+      assert.equal(currentPageFromScroll(after, after.map(() => next), scroll, 500), 200);
+      assert.ok(Math.abs((scroll - after[199]) / next - 0.4) < 1e-10);
+      height = next;
+    }
+  });
+
+  it("preserves a fixed gap before a page rather than scaling the page margins", () => {
+    assert.equal(readingScrollTop(2024, 2000, readingOffset(1014, 1000, 1008)), 2018);
+    assert.equal(readingScrollTop(4, 500, readingOffset(4, 1000, 0)), 0);
+  });
+
+  it("uses the selected page geometry with mixed page sizes", () => {
+    const anchor = readingOffset(830, 600, 1130);
+    assert.equal(readingScrollTop(1230, 900, anchor), 1680);
+  });
+});
 
 describe("clampPage", () => {
   it("clamps to [1, numPages] and rounds", () => {

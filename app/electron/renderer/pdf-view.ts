@@ -1,11 +1,10 @@
 /** Shapes match `app/pdf/overlay.ts`. Duplicated: renderer build cannot import that tree. */
 
-import { clampPage, clampZoom, ZOOM_FIT } from "./pdf-nav.ts";
+import { clampPage, clampZoom, readingOffset, readingScrollTop, ZOOM_FIT } from "./pdf-nav.ts";
 import {
   PDF_OVERSCAN_PAGES,
   PDF_RESIZE_DEBOUNCE_MS,
   currentPageFromScroll,
-  expandPageWindow,
   pageInRange,
   rasterWindowFromScroll,
   samePageRange,
@@ -317,9 +316,7 @@ export async function mountPdfView(opts: {
   };
 
   const readCurrentPage = (): number => {
-    if (intersecting.size > 0) {
-      return Math.min(...intersecting);
-    }
+    // Observer entries may still describe the layout before resize/scroll.
     return currentPageFromScroll(
       pages.map((p) => p.el.offsetTop),
       pages.map((p) => p.el.offsetHeight),
@@ -480,9 +477,6 @@ export async function mountPdfView(opts: {
   };
 
   const wantedRange = (): PageRange => {
-    if (intersecting.size > 0) {
-      return expandPageWindow([...intersecting], doc.numPages, PDF_OVERSCAN_PAGES);
-    }
     return rasterWindowFromScroll(
       pages.map((p) => p.el.offsetTop),
       pages.map((p) => p.el.offsetHeight),
@@ -632,7 +626,10 @@ export async function mountPdfView(opts: {
     if (dead || gen !== layoutGen) {
       return;
     }
-    const scrollTop = root.scrollTop;
+    // Capture after async measurement, immediately before changing geometry:
+    // scrolling or a page jump while measuring must remain authoritative.
+    const anchorSlot = pages[readCurrentPage() - 1]!;
+    const anchor = readingOffset(anchorSlot.el.offsetTop, anchorSlot.el.offsetHeight, root.scrollTop);
     const scrollLeft = root.scrollLeft;
     for (const slot of pages) {
       const viewport = viewports[slot.page - 1];
@@ -645,9 +642,12 @@ export async function mountPdfView(opts: {
       }
     }
     applied = { from: 1, to: 0 };
-    root.scrollTop = scrollTop;
+    root.scrollTop = readingScrollTop(anchorSlot.el.offsetTop, anchorSlot.el.offsetHeight, anchor);
     root.scrollLeft = scrollLeft;
+    intersecting.clear();
     syncWindow();
+    emitPage();
+    opts.onChrome();
   };
 
   await layoutPlaceholders();
@@ -655,10 +655,12 @@ export async function mountPdfView(opts: {
   let lastWidth = root.clientWidth;
   const ro = new ResizeObserver(() => {
     const width = root.clientWidth;
-    if (Math.abs(width - lastWidth) < 8) {
+    if (width === lastWidth) {
       return;
     }
     lastWidth = width;
+    // Invalidate in-flight measurements immediately, including the debounce interval.
+    layoutGen += 1;
     if (resizeTimer) {
       window.clearTimeout(resizeTimer);
     }
@@ -708,15 +710,11 @@ export async function mountPdfView(opts: {
     getZoom: () => zoom,
     setZoom: async (next) => {
       const z = clampZoom(next);
-      const page = readCurrentPage();
       if (z === zoom && pages.length > 0) {
         return;
       }
       zoom = z;
       await layoutPlaceholders();
-      if (!dead) {
-        gotoPage(page);
-      }
     },
     gotoPage,
     numPages: () => doc.numPages,

@@ -6,6 +6,20 @@ export const ZOOM_STEP = 1.25;
 /** `1` = fit the column width. Other values are multipliers on that fit. */
 export const ZOOM_FIT = 1;
 
+/** Position relative to a page; inter-page whitespace remains a pixel gap. */
+export type ReadingOffset = { fraction: number; gap: number };
+
+export function readingOffset(top: number, height: number, scrollTop: number): ReadingOffset {
+  const offset = scrollTop - top;
+  return offset < 0
+    ? { fraction: 0, gap: offset }
+    : { fraction: Math.min(1, offset / Math.max(1, height)), gap: 0 };
+}
+
+export function readingScrollTop(top: number, height: number, anchor: ReadingOffset): number {
+  return Math.max(0, top + height * anchor.fraction + anchor.gap);
+}
+
 export function clampZoom(value: number): number {
   if (!Number.isFinite(value)) {
     return ZOOM_FIT;
