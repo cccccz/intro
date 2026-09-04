@@ -39,9 +39,25 @@ export function pageCountInRange(range: PageRange): number {
 }
 
 /**
+ * Hard cap on window size: intersecting pages plus overscan on both sides.
+ * Independent of `numPages` — a longer document cannot enlarge the window.
+ * An empty intersecting set is seeded as one page (same as `expandPageWindow`).
+ */
+export function windowPageCountCap(
+  intersectingCount: number,
+  overscan: number = PDF_OVERSCAN_PAGES,
+): number {
+  const core = intersectingCount > 0 ? intersectingCount : 1;
+  return core + 2 * Math.max(0, overscan);
+}
+
+/**
  * Expand intersecting 1-based page numbers by `overscan`, clamped to
  * `[1, numPages]`. An empty intersecting set seeds the first window so the
  * initial layout has something to paint before observers fire.
+ *
+ * `pageCountInRange` of the result is at most
+ * `windowPageCountCap(intersecting.length, overscan)` — independent of `numPages`.
  */
 export function expandPageWindow(
   intersecting: readonly number[],
