@@ -312,16 +312,23 @@ export async function mountPdfView(opts: {
   let resizeTimer = 0;
   let readingTimer = 0;
   let readingReady = false;
+  let lastReading = savedReading;
+  let restoreAfterHidden = false;
   const persistReading = (): void => {
     if (readingTimer) window.clearTimeout(readingTimer);
     readingTimer = 0;
     if (!readingReady || dead || !opts.readingStorageKey || !pages.length) return;
+    if (!root.clientWidth) {
+      if (lastReading) saveReading(localStorage, opts.readingStorageKey, lastReading);
+      return;
+    }
     const page = readCurrentPage();
     const slot = pages[page - 1]!;
-    saveReading(localStorage, opts.readingStorageKey, {
+    lastReading = {
       page, zoom,
       ...readingOffset(slot.el.offsetTop, slot.el.offsetHeight, root.scrollTop),
-    });
+    };
+    saveReading(localStorage, opts.readingStorageKey, lastReading);
   };
 
   const scaleFor = async (pageNo: number): Promise<number> => {
@@ -345,6 +352,11 @@ export async function mountPdfView(opts: {
     if (!dead) {
       opts.onPageChange?.(readCurrentPage(), doc.numPages);
       if (readingReady) {
+        if (root.clientWidth && !restoreAfterHidden && pages.length) {
+          const page = readCurrentPage();
+          const slot = pages[page - 1]!;
+          lastReading = { page, zoom, ...readingOffset(slot.el.offsetTop, slot.el.offsetHeight, root.scrollTop) };
+        }
         if (readingTimer) window.clearTimeout(readingTimer);
         readingTimer = window.setTimeout(persistReading, 300);
       }
@@ -648,8 +660,9 @@ export async function mountPdfView(opts: {
     }
     // Capture after async measurement, immediately before changing geometry:
     // scrolling or a page jump while measuring must remain authoritative.
-    const anchorSlot = pages[readCurrentPage() - 1]!;
-    const anchor = readingOffset(anchorSlot.el.offsetTop, anchorSlot.el.offsetHeight, root.scrollTop);
+    const restore = restoreAfterHidden ? lastReading : null;
+    const anchorSlot = pages[(restore?.page ?? readCurrentPage()) - 1]!;
+    const anchor = restore ?? readingOffset(anchorSlot.el.offsetTop, anchorSlot.el.offsetHeight, root.scrollTop);
     const scrollLeft = root.scrollLeft;
     for (const slot of pages) {
       const viewport = viewports[slot.page - 1];
@@ -664,6 +677,7 @@ export async function mountPdfView(opts: {
     applied = { from: 1, to: 0 };
     root.scrollTop = readingScrollTop(anchorSlot.el.offsetTop, anchorSlot.el.offsetHeight, anchor);
     root.scrollLeft = scrollLeft;
+    restoreAfterHidden = false;
     intersecting.clear();
     syncWindow();
     emitPage();
@@ -684,6 +698,14 @@ export async function mountPdfView(opts: {
   let lastWidth = root.clientWidth;
   const ro = new ResizeObserver(() => {
     const width = root.clientWidth;
+    if (!width) {
+      restoreAfterHidden = true;
+      layoutGen += 1;
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = 0;
+      lastWidth = 0;
+      return;
+    }
     if (width === lastWidth) {
       return;
     }

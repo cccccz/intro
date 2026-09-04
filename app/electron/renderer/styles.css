@@ -209,6 +209,7 @@ body.is-col-resizing .pdf-overlay {
 }
 
 #board {
+  flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -217,12 +218,13 @@ body.is-col-resizing .pdf-overlay {
 }
 
 #columns {
+  min-height: 0;
   flex: 1;
   min-width: 0;
   position: relative;
   z-index: 1;
   display: flex;
-  overflow-x: auto;
+  overflow-x: hidden;
   background: var(--bg);
 }
 
@@ -719,11 +721,15 @@ body.is-col-resizing .pdf-overlay {
   overflow-anchor: none;
   position: absolute;
   inset: 0;
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: auto;
   padding: 4px;
   background: #e4e4e7;
 }
+
+#column-nav { display: flex; gap: 6px; padding: 5px 8px; flex-shrink: 0; overflow: auto; z-index: 5; background: white; }
+#column-nav:empty { display: none; }
+#column-nav button[aria-current="true"] { color: #2563eb; background: #eff6ff; }
 
 .card-resize {
   position: absolute;

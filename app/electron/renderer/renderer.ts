@@ -233,6 +233,39 @@ const chromeLayout: ChromeLayout = loadChromeLayout(localStorage);
 let hotId: string | null = null;
 let wireFrame = 0;
 let pendingAlign: string | null = null;
+let columnStart = 0;
+
+function showColumnWindow(start: number): void {
+  const hi = maxDepth(state.nodes);
+  columnStart = Math.max(0, Math.min(start, Math.max(0, hi - 2)));
+  const cols = Array.from(el.columns.querySelectorAll<HTMLElement>(":scope > .column"));
+  for (const col of cols) {
+    const depth = Number(col.dataset.depth ?? 0);
+    col.hidden = depth < columnStart || depth > columnStart + 2;
+    col.style.minWidth = "0";
+    col.style.width = "0";
+    col.style.flex = `${chromeLayout.columnWidths[String(depth)] ?? 360} 1 0px`;
+  }
+  el.columns.querySelectorAll(":scope > .splitter").forEach((split) => split.remove());
+  insertColumnSplitters();
+  const nav = document.getElementById("column-nav")!;
+  nav.replaceChildren();
+  if (!state.nodes.length) return;
+  const button = (label: string, target: number, disabled = false): void => {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.onclick = () => showColumnWindow(target);
+    nav.append(btn);
+  };
+  button("←", columnStart - 1, columnStart === 0);
+  for (let depth = 0; depth <= hi; depth++) {
+    button(depth === 0 ? "原文" : `d${depth}`, Math.max(0, depth - 2));
+    nav.lastElementChild?.setAttribute("aria-current", String(depth >= columnStart && depth <= columnStart + 2));
+  }
+  button("→", columnStart + 1, columnStart + 2 >= hi);
+  scheduleChrome();
+}
 let pendingPdfPage: { nodeId: string; page: number } | null = null;
 
 function shortId(id: string): string {
@@ -295,10 +328,12 @@ function applyColumnWidth(section: HTMLElement, depth: number, pdfHost: boolean)
 }
 
 function insertColumnSplitters(): void {
-  const cols = Array.from(el.columns.querySelectorAll(":scope > .column")) as HTMLElement[];
+  const cols = Array.from(el.columns.querySelectorAll<HTMLElement>(":scope > .column")).filter(col => !col.hidden);
   // After every column, including the last, so a lone PDF/host pane can be enlarged.
-  for (let i = 0; i < cols.length; i++) {
+  for (let i = 0; i < cols.length - 1; i++) {
     const left = cols[i]!;
+    const right = cols[i + 1]!;
+    let total = 0;
     const split = document.createElement("div");
     split.className = "splitter v-split";
     split.setAttribute("role", "separator");
@@ -308,15 +343,20 @@ function insertColumnSplitters(): void {
       left.classList.contains("pdf-host") ? "Resize PDF column" : "Resize column",
     );
     bindVSplitter(split, {
-      getWidth: () => left.getBoundingClientRect().width,
+      getWidth: () => {
+        for (const col of cols) col.style.flex = `${col.getBoundingClientRect().width} 1 0px`;
+        total = left.getBoundingClientRect().width + right.getBoundingClientRect().width;
+        return left.getBoundingClientRect().width;
+      },
       setWidth: (width) => {
-        left.style.flex = `0 0 ${width}px`;
-        left.style.width = `${width}px`;
+        left.style.flex = `${width} 1 0px`;
+        right.style.flex = `${total - width} 1 0px`;
+        for (const col of cols) chromeLayout.columnWidths[col.dataset.depth ?? "0"] = Number.parseFloat(col.style.flexGrow);
         chromeLayout.columnWidths[left.dataset.depth ?? String(i)] = width;
         persistLayout();
         scheduleChrome();
       },
-      clamp: clampColumnWidth,
+      clamp: value => Math.max(Math.min(160, total / 2), Math.min(total - Math.min(160, total / 2), value)),
     });
     left.after(split);
   }
@@ -517,7 +557,7 @@ function overlayQuote(rivet: OverlayRivet): string {
 }
 
 function modeOf(nodeId: string): BodyMode {
-  return state.modes[nodeId] ?? "source";
+  return state.modes[nodeId] ?? "rendered";
 }
 
 function clipOf(surface: HTMLElement): AnchorRect {
@@ -705,6 +745,10 @@ function syncViewportSides(): void {
       continue;
     }
     const host = surfaceOf(node.parentId);
+    if ((host?.closest(".column") as HTMLElement | null)?.hidden) {
+      card.hidden = false;
+      continue;
+    }
     const parentCard = host?.closest(".card") as HTMLElement | null;
     const parentHidden = Boolean(host && (host.hidden || parentCard?.hidden));
     card.hidden = parentHidden || !host || visibleRects(host, node.viaRivetId).length === 0;
@@ -923,6 +967,11 @@ function disposePdfViews(): void {
 }
 
 function renderColumns(): void {
+  const drafts = new Map<string, { pieceId: string | undefined; value: string; top: number; start: number; end: number }>();
+  for (const surface of el.columns.querySelectorAll<HTMLElement>("[data-node-id]")) {
+    const editor = surface.querySelector<HTMLTextAreaElement>("textarea.editor");
+    if (editor) drafts.set(surface.dataset.nodeId!, { pieceId: surface.dataset.pieceId, value: editor.value, top: editor.scrollTop, start: editor.selectionStart, end: editor.selectionEnd });
+  }
   const keep = new Set(state.nodes.map((n) => n.id));
   disposePdfViews();
   for (const id of Object.keys(state.modes)) {
@@ -938,6 +987,7 @@ function renderColumns(): void {
       ? "Open a piece from the left, or create the first one."
       : "Open a local library folder to write.";
     el.columns.append(hint);
+    document.getElementById("column-nav")!.replaceChildren();
     drawWires();
     return;
   }
@@ -949,7 +999,19 @@ function renderColumns(): void {
   for (let depth = 1; depth <= hi; depth++) {
     el.columns.append(renderSideColumn(depth));
   }
-  insertColumnSplitters();
+  const target = state.nodes.find(node => node.id === pendingAlign)?.depth;
+  showColumnWindow(target === undefined ? columnStart : Math.max(0, target - 2));
+  for (const [id, draft] of drafts) {
+    const surface = surfaceOf(id);
+    const editor = surface?.querySelector<HTMLTextAreaElement>("textarea.editor");
+    if (!editor || !surface) continue;
+    // Do not carry the previous root's text into a newly opened document.
+    if (surface.dataset.pieceId !== draft.pieceId) continue;
+    editor.value = draft.value;
+    editor.scrollTop = draft.top;
+    editor.setSelectionRange(draft.start, draft.end);
+    paintSurface(surface);
+  }
   scheduleChrome();
 }
 
@@ -1728,6 +1790,7 @@ async function hangFromPdf(parentId: string, sideId: string | undefined): Promis
     state.pieces = listed.pieces;
   }
   state.nodes = openSide(state.nodes, parentId, result.side.id, result.rivetId);
+  state.modes[result.rivetId] = sideId ? "rendered" : "source";
   pendingAlign = result.rivetId;
   renderSidebar();
   renderColumns();
@@ -1776,6 +1839,7 @@ async function hangFromEditor(
     state.pieces = listed.pieces;
   }
   state.nodes = openSide(state.nodes, parentId, result.side.id, result.rivetId);
+  state.modes[result.rivetId] = sideId ? "rendered" : "source";
   pendingAlign = result.rivetId;
   renderSidebar();
   renderColumns();
@@ -1799,6 +1863,7 @@ async function openRootPiece(id: string): Promise<void> {
   }
   state.views[id] = result.piece;
   state.nodes = openRoot(id);
+  state.modes[state.nodes[0]!.id] = "rendered";
   renderSidebar();
   renderColumns();
   if (result.piece.medium !== "pdf") {
@@ -1898,6 +1963,7 @@ el.newPiece.addEventListener("click", async () => {
   state.pieces = result.pieces;
   state.views[result.piece.id] = result.piece;
   state.nodes = openRoot(result.piece.id);
+  state.modes[state.nodes[0]!.id] = "source";
   renderSidebar();
   renderColumns();
   const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
