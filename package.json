@@ -12,7 +12,8 @@
     "electron:dev": "npm run build:app && electron ."
   },
   "dependencies": {
-    "katex": "^0.16.11"
+    "katex": "^0.16.11",
+    "markdown-it": "^14.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.13.14",

@@ -13,19 +13,11 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-type Event = { pos: number; kind: "start" | "end"; rivet: RivetRange };
+export type RivetBound = { pos: number; kind: "start" | "end"; rivet: RivetRange };
 
-/**
- * Wrap clean ranges in `[data-rivet]` marks. `formatText` sees each unmarked
- * slice (source view escapes only; rendered view can markup). View-layer only.
- */
-export function wrapRivets(
-  clean: string,
-  rivets: readonly RivetRange[],
-  openIds: readonly string[],
-  formatText: (text: string) => string,
-): string {
-  const events: Event[] = [];
+/** Sorted start/end events for in-range rivets. Shared by source wrap and rendered sentinels. */
+export function rivetBounds(clean: string, rivets: readonly RivetRange[]): RivetBound[] {
+  const events: RivetBound[] = [];
   for (const rivet of rivets) {
     if (rivet.start < 0 || rivet.end > clean.length || rivet.start >= rivet.end) {
       continue;
@@ -44,6 +36,20 @@ export function wrapRivets(
     const db = b.rivet.end - b.rivet.start;
     return a.kind === "start" ? db - da : da - db;
   });
+  return events;
+}
+
+/**
+ * Wrap clean ranges in `[data-rivet]` marks. `formatText` sees each unmarked
+ * slice (source view escapes only). View-layer only; not a persist format.
+ */
+export function wrapRivets(
+  clean: string,
+  rivets: readonly RivetRange[],
+  openIds: readonly string[],
+  formatText: (text: string) => string,
+): string {
+  const events = rivetBounds(clean, rivets);
 
   let html = "";
   let cursor = 0;

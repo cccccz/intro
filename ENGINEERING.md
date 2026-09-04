@@ -24,7 +24,7 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 测试
 
-现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂），以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何；列内 rendered HTML）。不做 UI snapshot，也不做 Electron E2E。
+现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂），以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何；列内 rendered HTML：markdown-it 子集 + 消毒 + 铆点占位）。不做 UI snapshot，也不做 Electron E2E。
 
 写者壳的高亮与列间导线是视图像（结论第 39 条）：只读铆点 id 与已有标记算出的选区。第一版几何由 textarea/HTML 提供；日后 PDF 换同一 `rivetId → rects` 接口。不把 overlay 坐标写入磁盘。导线只连「打开的铆点 ↔ 打开的侧边卡片」。同层多支叠在该层 panel（第 22 条）。源滚出视口则不画该侧边（第 36 条），不是合上。标记权威与库 API 不变。
 

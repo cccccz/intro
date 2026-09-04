@@ -17,11 +17,17 @@ fs.copyFileSync(
   path.join(rendererDest, "styles.css"),
 );
 
+const vendorDest = path.join(rendererDest, "vendor");
+fs.mkdirSync(path.join(vendorDest, "fonts"), { recursive: true });
+
 const katexSrc = path.resolve(electronDir, "../../node_modules/katex/dist");
-const katexDest = path.join(rendererDest, "vendor");
-fs.mkdirSync(path.join(katexDest, "fonts"), { recursive: true });
-fs.copyFileSync(path.join(katexSrc, "katex.min.js"), path.join(katexDest, "katex.min.js"));
-fs.copyFileSync(path.join(katexSrc, "katex.min.css"), path.join(katexDest, "katex.min.css"));
+fs.copyFileSync(path.join(katexSrc, "katex.min.js"), path.join(vendorDest, "katex.min.js"));
+fs.copyFileSync(path.join(katexSrc, "katex.min.css"), path.join(vendorDest, "katex.min.css"));
 for (const name of fs.readdirSync(path.join(katexSrc, "fonts"))) {
-  fs.copyFileSync(path.join(katexSrc, "fonts", name), path.join(katexDest, "fonts", name));
+  fs.copyFileSync(path.join(katexSrc, "fonts", name), path.join(vendorDest, "fonts", name));
 }
+
+fs.copyFileSync(
+  path.resolve(electronDir, "../../node_modules/markdown-it/dist/markdown-it.min.js"),
+  path.join(vendorDest, "markdown-it.min.js"),
+);
