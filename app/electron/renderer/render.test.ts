@@ -100,7 +100,7 @@ describe("renderHtml", () => {
     const html = renderHtml("phi $x$ end", [{ id: "r1", start: 4, end: 7 }]);
     assert.equal(
       html,
-      '<p>phi <mark data-rivet="r1"><span class="tex">x</span></mark> end</p>\n',
+      '<p>phi <mark data-rivet="r1"><span class="math-source" data-math-start="5" data-math-anchors="[]" data-math-open="[]"><span class="tex">x</span></span></mark> end</p>\n',
     );
   });
 
@@ -175,5 +175,54 @@ describe("rivets first, then markdown", () => {
       html,
       '<p><mark data-rivet="outer">outer <mark data-rivet="inner" class="open">inner</mark></mark> end</p>\n',
     );
+  });
+});
+
+
+describe("LaTeX delimiters pasted from Codex", () => {
+  it("never passes rivet placeholders into the math renderer", () => {
+    const source = String.raw`\[a+\frac{b}{c}\]`;
+    const start = source.indexOf("b");
+    let received = "";
+    const html = renderHtml(source, [{id:"r1",start,end:start+1}], [], tex => {received=tex; return "FORMULA";});
+    assert.equal(received, String.raw`a+\frac{b}{c}`);
+    assert.match(html, /data-math-anchors/);
+    assert.doesNotMatch(html, /[\uE000\uE001]/);
+  });
+  it("maps repeated formulas by their Markdown source positions, skipping code", () => {
+    const source = "```\n$x$\n```\n\n$x$ and $x$\n\n\\[\nx\n\\]";
+    const html = renderHtml(source);
+    const starts = [...html.matchAll(/data-math-start="(\d+)"/g)].map(m => Number(m[1]));
+    assert.deepEqual(starts, [source.indexOf("$x$ and") + 1, source.indexOf("and $x$") + 5, source.lastIndexOf("\nx\n") + 1]);
+  });
+  it("protects multiline equations from Markdown headings", () => {
+    const calls: {tex: string; display: boolean}[] = [];
+    const src = String.raw`使用方差公式：
+
+\[
+\operatorname{Var}(\Delta y)
+=
+\mathbb E[(\Delta y)^2]
+-
+\bigl(\mathbb E[\Delta y]\bigr)^2.
+\]
+
+提取 \(\delta y^2\)。`;
+    const html = markupMarkdown(src, (tex, display) => {
+      calls.push({tex, display});
+      return "FORMULA";
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0]!.display, true);
+    assert.ok(calls[0]!.tex.includes("\n-\n"));
+    assert.deepEqual(calls[1], {tex: String.raw`\delta y^2`, display: false});
+    assert.doesNotMatch(html, /<h[12]>/);
+  });
+  it("supports same-line display and leaves code untouched", () => {
+    const math = (tex: string, display: boolean) => `${display ? "D" : "I"}:${tex}`;
+    assert.match(markupMarkdown(String.raw`\[x^2\]`, math), /D:x\^2/);
+    assert.match(markupMarkdown(String.raw`text \[x\] end`, math), /D:x/);
+    assert.doesNotMatch(markupMarkdown('`\\(x\\)`\n\n```\n\\[x\\]\n```', math), /[DI]:x/);
+    assert.doesNotMatch(markupMarkdown(String.raw`unclosed \(x`, math), /I:x/);
   });
 });

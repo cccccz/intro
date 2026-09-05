@@ -1,6 +1,6 @@
 import { escapeHtml, rivetBounds, type RivetRange } from "./highlight.ts";
 
-export type MathRenderer = (tex: string, displayMode: boolean) => string;
+export type MathRenderer = (tex: string, displayMode: boolean, sourceStart?: number) => string;
 
 type Katex = {
   renderToString(
@@ -15,7 +15,8 @@ type MdToken = {
   markup?: string;
   block?: boolean;
   map?: [number, number] | null;
-  meta?: { display?: boolean };
+  meta?: { display?: boolean; relativeStart?: number; sourceStart?: number };
+  children?: MdToken[];
 };
 
 type MdInlineState = {
@@ -38,6 +39,7 @@ type MdBlockState = {
 };
 
 type MarkdownIt = {
+  core: { ruler: { after: (name: string, rule: string, fn: (state: { tokens: MdToken[] }) => void) => void } };
   render: (src: string) => string;
   disable: (rules: string | string[]) => MarkdownIt;
   block: {
@@ -216,11 +218,14 @@ function restoreMath(html: string, parts: readonly string[]): string {
 }
 
 function mathInline(state: MdInlineState, silent: boolean): boolean {
-  if (state.src.charCodeAt(state.pos) !== 0x24) {
+  const slash = state.src.slice(state.pos, state.pos + 2);
+  const latex = slash === "\\(" || slash === "\\[";
+  if (!latex && state.src.charCodeAt(state.pos) !== 0x24) {
     return false;
   }
-  const display = state.src.charCodeAt(state.pos + 1) === 0x24;
-  const openLen = display ? 2 : 1;
+  const display = latex ? slash === "\\[" : state.src.charCodeAt(state.pos + 1) === 0x24;
+  const openLen = latex || display ? 2 : 1;
+  const close = latex ? (display ? "\\]" : "\\)") : (display ? "$$" : "$");
   const start = state.pos + openLen;
   if (start > state.posMax) {
     return false;
@@ -231,8 +236,8 @@ function mathInline(state: MdInlineState, silent: boolean): boolean {
     if (!display && ch === 0x0a) {
       return false;
     }
-    if (ch === 0x24) {
-      if (display && state.src.charCodeAt(i + 1) !== 0x24) {
+    if (state.src.startsWith(close, i)) {
+      if (!latex && display && state.src.charCodeAt(i + 1) !== 0x24) {
         i += 1;
         continue;
       }
@@ -243,10 +248,10 @@ function mathInline(state: MdInlineState, silent: boolean): boolean {
       if (!silent) {
         const token = state.push("math_inline", "span", 0);
         token.content = tex;
-        token.markup = display ? "$$" : "$";
-        token.meta = { display };
+        token.markup = latex ? slash : (display ? "$$" : "$");
+        token.meta = { display, relativeStart: start };
       }
-      state.pos = i + openLen;
+      state.pos = i + close.length;
       return true;
     }
     i += 1;
@@ -260,19 +265,21 @@ function mathBlock(state: MdBlockState, start: number, end: number, silent: bool
   }
   const pos = state.bMarks[start]! + state.tShift[start]!;
   const max = state.eMarks[start]!;
-  if (pos + 2 > max || state.src.slice(pos, pos + 2) !== "$$") {
+  const opener = state.src.slice(pos, pos + 2);
+  const closer = opener === "\\[" ? "\\]" : "$$";
+  if (pos + 2 > max || (opener !== "$$" && opener !== "\\[")) {
     return false;
   }
   const first = state.src.slice(pos + 2, max);
   const sameLine = first.trimEnd();
-  if (sameLine.endsWith("$$") && sameLine.length > 2) {
+  if (sameLine.endsWith(closer) && sameLine.length > 2) {
     if (silent) {
       return true;
     }
     const token = state.push("math_block", "div", 0);
     token.block = true;
     token.content = sameLine.slice(0, sameLine.length - 2);
-    token.markup = "$$";
+    token.markup = opener;
     token.map = [start, start + 1];
     state.line = start + 1;
     return true;
@@ -288,7 +295,7 @@ function mathBlock(state: MdBlockState, start: number, end: number, silent: bool
       break;
     }
     const line = state.src.slice(linePos, lineMax);
-    if (line.trim().endsWith("$$")) {
+    if (line.trim().endsWith(closer)) {
       lastLine = line.trim().slice(0, -2);
       found = true;
       break;
@@ -306,25 +313,41 @@ function mathBlock(state: MdBlockState, start: number, end: number, silent: bool
     (first.trim() ? `${first.trim()}\n` : "") +
     state.getLines(start + 1, next, state.tShift[start]!, false) +
     lastLine;
-  token.markup = "$$";
+  token.markup = opener;
   token.map = [start, next + 1];
   state.line = next + 1;
   return true;
 }
 
-function attachMath(md: MarkdownIt, math: MathRenderer, store: string[]): void {
+function attachMath(md: MarkdownIt, math: MathRenderer, store: string[], source: string): void {
   md.block.ruler.before("fence", "math_block", mathBlock, {
     alt: ["paragraph", "reference", "blockquote", "list"],
   });
   md.inline.ruler.before("escape", "math_inline", mathInline);
-  const emit = (tex: string, display: boolean): string => {
+  md.core.ruler.after("inline", "math_source_positions", (state) => {
+    const lines = [0];
+    for (let i = 0; i < source.length; i++) if (source[i] === "\n") lines.push(i + 1);
+    for (const token of state.tokens) {
+      if (!token.map) continue;
+      const from = lines[token.map[0]] ?? 0;
+      const until = lines[token.map[1]] ?? source.length;
+      const base = source.indexOf(token.content, from);
+      if (base < from || base + token.content.length > until) continue;
+      if (token.type === "math_block") token.meta = { ...token.meta, sourceStart: base };
+      for (const child of token.children ?? []) {
+        if (child.type === "math_inline" && child.meta?.relativeStart !== undefined)
+          child.meta.sourceStart = base + child.meta.relativeStart;
+      }
+    }
+  });
+  const emit = (token: MdToken, display: boolean): string => {
     const i = store.length;
-    store.push(math(tex, display));
+    store.push(math(token.content, display, token.meta?.sourceStart));
     return mathPlaceholder(i);
   };
-  md.renderer.rules.math_block = (tokens, idx) => `${emit(tokens[idx]!.content, true)}\n`;
+  md.renderer.rules.math_block = (tokens, idx) => `${emit(tokens[idx]!, true)}\n`;
   md.renderer.rules.math_inline = (tokens, idx) =>
-    emit(tokens[idx]!.content, Boolean(tokens[idx]!.meta?.display));
+    emit(tokens[idx]!, Boolean(tokens[idx]!.meta?.display));
 }
 
 function decodeAttr(value: string): string {
@@ -471,7 +494,7 @@ function renderMarkdown(src: string, math: MathRenderer): { html: string; math: 
   const store: string[] = [];
   const md = factory({ html: false, linkify: false, breaks: false, typographer: false });
   md.disable("table");
-  attachMath(md, math, store);
+  attachMath(md, math, store, src);
   return { html: md.render(src), math: store };
 }
 
@@ -503,7 +526,34 @@ export function renderHtml(
   math: MathRenderer = fallbackMath,
 ): string {
   const marked = insertRivetPlaceholders(clean, rivets);
-  const rendered = renderMarkdown(marked.text, math);
+  const rendered = renderMarkdown(marked.text, (tex, display, sourceStart) => {
+    const ranges: { id: string; start: number; end: number }[] = [];
+    const active = new Map<number, number>();
+    let cleanTex = "", cursor = 0, before = "", after = "";
+    for (const match of tex.matchAll(/\uE000([SE])(\d+)\uE001/g)) {
+      cleanTex += tex.slice(cursor, match.index);
+      const index = Number(match[2]);
+      if (match[1] === "S") active.set(index, cleanTex.length);
+      else if (active.has(index)) {
+        ranges.push({ id: marked.ids[index]!, start: active.get(index)!, end: cleanTex.length });
+        active.delete(index);
+      } else {
+        // The anchor starts outside this formula. End its outer wrapper first,
+        // then project its mathematical portion independently.
+        before += match[0];
+        ranges.push({ id: marked.ids[index]!, start: 0, end: cleanTex.length });
+      }
+      cursor = match.index! + match[0].length;
+    }
+    cleanTex += tex.slice(cursor);
+    for (const [index, start] of active) {
+      ranges.push({ id: marked.ids[index]!, start, end: cleanTex.length });
+      after += rivetStartPh(index);
+    }
+    const start = sourceStart === undefined ? -1 : marked.text.slice(0, sourceStart).replace(/\uE000[SE]\d+\uE001/g, "").length;
+    const html = math(cleanTex, display);
+    return `${before}<span class="math-source" data-math-start="${start}" data-math-anchors="${escapeHtml(JSON.stringify(ranges))}" data-math-open="${escapeHtml(JSON.stringify(openIds))}">${html}</span>${after}`;
+  });
   const safe = sanitizeHtml(rendered.html);
   return restoreRivets(restoreMath(safe, rendered.math), marked.ids, openIds);
 }

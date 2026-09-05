@@ -31,3 +31,18 @@ describe("anchor geometry", () => {
     assert.deepEqual(firstPaintedRects([hidden]), []);
   });
 });
+
+
+it("merges a term and its superscript without retaining nested boxes", async () => {
+  const { mathRegions } = await import("./math-regions.ts");
+  assert.deepEqual(mathRegions([
+    {left:0,top:10,right:12,bottom:30}, {left:13,top:10,right:27,bottom:30},
+    {left:25,top:2,right:32,bottom:18}, {left:2,top:12,right:8,bottom:25},
+  ]), [{left:0,top:2,right:32,bottom:30}]);
+  const nativeLike = Object.create({left:0,top:0,right:10,bottom:10});
+  assert.deepEqual(mathRegions([nativeLike]), [{left:0,top:0,right:10,bottom:10}]);
+  assert.equal(mathRegions([
+    {left:0,top:0,right:12,bottom:20}, {left:40,top:0,right:50,bottom:20},
+    {left:0,top:30,right:12,bottom:50},
+  ]).length,3);
+});

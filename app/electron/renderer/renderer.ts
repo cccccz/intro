@@ -11,6 +11,7 @@ import { cardHeightKey, clampCardHeight, loadCardHeight, saveCardHeight, resizeC
 import { readingKey } from "./pdf-reading.ts";
 import { PinBoard, type Pin } from "./pins.ts";
 import { locateText, mapRenderedBlocks, renderedSelection } from "./pin-model.ts";
+import { loadSidePins, saveSidePins, sidePinId } from "./side-pins.ts";
 import {
   COLUMN_MIN,
   bindVSplitter,
@@ -38,6 +39,8 @@ import {
   type PdfViewHandle,
 } from "./pdf-view.ts";
 import { katexMath, renderHtml } from "./render.ts";
+import { batchTo, inputChange, type EditBatch, type InputChange } from "./input-edits.ts";
+import { paintMathAnchors, paintMathRegions } from "./math-anchors.ts";
 
 type Damage = { kind: string; message: string; index: number; id?: string };
 type RivetSpec = { id: string; to?: string | null; start: number; end: number };
@@ -89,7 +92,7 @@ type IntroApi = {
     title: string,
   ) => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
   loadPiece: (id: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
-  persistClean: (id: string, clean: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
+  persistClean: (id: string, clean: string, batch?: EditBatch) => Promise<Ok<{ piece: PieceDto }> | Err>;
   hangSide: (opts: {
     hostId: string;
     start: number;
@@ -207,6 +210,7 @@ type State = {
    * rendered is a read-only projection. Highlight/wires are view-layer.
    */
   modes: Record<string, BodyMode>;
+  sidePins: Set<string>;
 };
 
 const state: State = {
@@ -215,6 +219,7 @@ const state: State = {
   nodes: [],
   views: {},
   modes: {},
+  sidePins: new Set(),
 };
 
 const el = {
@@ -233,6 +238,34 @@ const el = {
 };
 
 const persistTimers = new Map<string, number>();
+
+const inputHistory = new Map<string, InputChange[]>();
+const saveQueues = new Map<string, Promise<Ok<{ piece: PieceDto }> | Err>>();
+function draftKey(id: string): string { return `intro:unsaved:v1:${JSON.stringify([state.root, id])}`; }
+function saveSource(id: string, clean: string): Promise<Ok<{ piece: PieceDto }> | Err> {
+  const root = state.root;
+  const key = JSON.stringify([root, id]);
+  const previous = saveQueues.get(key);
+  const task = (async (): Promise<Ok<{ piece: PieceDto }> | Err> => {
+    if (previous) await previous;
+    if (state.root !== root) return { ok: false, error: "资料库已切换，未写入。" };
+    const expected = state.views[id]?.clean ?? clean;
+    const batch = batchTo(inputHistory.get(key) ?? [], expected, clean) ??
+      { expected, edits: [inputChange(expected, clean, 0, 0, "unknown").edit] };
+    const result = await window.intro.persistClean(id, clean, batch);
+    if (result.ok && state.root === root) {
+      state.views[id] = result.piece;
+      try {
+        const draft = JSON.parse(localStorage.getItem(draftKey(id)) ?? "null");
+        if (draft?.text === clean) localStorage.removeItem(draftKey(id));
+      } catch { /* Preference storage is best effort. */ }
+    }
+    return result;
+  })();
+  saveQueues.set(key, task);
+  return task;
+}
+
 const pdfViews = new Map<string, PdfViewHandle>();
 const chromeLayout: ChromeLayout = loadChromeLayout(localStorage);
 let hotId: string | null = null;
@@ -284,7 +317,7 @@ const pinBoard = new PinBoard(el.board, {
       const timer = persistTimers.get(id);
       if (timer !== undefined) window.clearTimeout(timer);
       persistTimers.delete(id);
-      const saved = await window.intro.persistClean(id, editor.value);
+      const saved = await saveSource(id, editor.value);
       if (!saved.ok) throw new Error(saved.error);
       pinBoard.sourceChanged(id, state.views[id]?.clean ?? saved.piece.clean, saved.piece.clean);
       state.views[id] = saved.piece;
@@ -689,8 +722,9 @@ function paintRendered(surface: HTMLElement): void {
     katexMath,
   );
   mapRenderedBlocks(pane, editor.value);
-  pane.querySelectorAll("mark[data-rivet]").forEach((mark) => {
-    const rivetId = (mark as HTMLElement).dataset.rivet;
+  paintMathAnchors(pane);
+  pane.querySelectorAll("mark[data-rivet], [data-math-rivets]").forEach((mark) => {
+    const rivetId = (mark as HTMLElement).dataset.rivet ?? (mark as HTMLElement).dataset.mathRivets?.split(" ")[0];
     if (!rivetId) {
       return;
     }
@@ -804,11 +838,12 @@ function scheduleChrome(): void {
       alignCard(pendingAlign);
       pendingAlign = null;
     }
+    el.columns.querySelectorAll<HTMLElement>(".body-rendered").forEach(pane => paintMathRegions(pane, hotId));
     drawWires();
   });
 }
 
-/** Hide a side card when its source is out of the host viewport. The column stays. */
+/** Explicitly pinned sides survive source scrolling, including hidden ancestors. */
 function syncViewportSides(): void {
   const cards = Array.from(el.columns.querySelectorAll(".card")) as HTMLElement[];
   cards.sort((a, b) => {
@@ -820,6 +855,10 @@ function syncViewportSides(): void {
     const node = state.nodes.find((n) => n.id === card.dataset.nodeId);
     if (!node?.parentId || !node.viaRivetId) {
       card.hidden = true;
+      continue;
+    }
+    if (card.dataset.sidePinned === "true") {
+      card.hidden = false;
       continue;
     }
     const host = surfaceOf(node.parentId);
@@ -850,17 +889,18 @@ function alignCard(nodeId: string): void {
 
 function setHot(id: string | null): void {
   hotId = id;
-  el.columns.querySelectorAll("mark.hot, .rivet.hot, .card.hot, .pdf-hl.hot").forEach((node) => {
+  el.columns.querySelectorAll("mark.hot, .rivet.hot, .card.hot, .pdf-hl.hot, .math-rivet.hot").forEach((node) => {
     node.classList.remove("hot");
   });
   if (id) {
-    el.columns.querySelectorAll(`[data-rivet="${CSS.escape(id)}"]`).forEach((node) => {
+    el.columns.querySelectorAll(`[data-rivet="${CSS.escape(id)}"], [data-math-rivets~="${CSS.escape(id)}"]`).forEach((node) => {
       node.classList.add("hot");
     });
     el.columns.querySelectorAll(`.card[data-node-id="${CSS.escape(id)}"]`).forEach((node) => {
       node.classList.add("hot");
     });
   }
+  el.columns.querySelectorAll<HTMLElement>(".body-rendered").forEach(pane => paintMathRegions(pane, hotId));
   drawWires();
 }
 
@@ -906,6 +946,7 @@ function drawWires(): void {
 
 function applyLibrary(library: LibraryDto): void {
   state.root = library.root;
+  state.sidePins = loadSidePins(localStorage, library.root);
   pinBoard.setLibrary(library.root);
   state.pieces = library.pieces;
   el.libPath.textContent = library.root;
@@ -972,7 +1013,7 @@ async function detachNode(node: OpenNode): Promise<void> {
     const timer = persistTimers.get(id);
     if (timer !== undefined) window.clearTimeout(timer);
     persistTimers.delete(id);
-    const saved = await window.intro.persistClean(id, editor.value);
+    const saved = await saveSource(id, editor.value);
     if (!saved.ok) { setStatus(saved.error, true); return; }
     state.views[id] = saved.piece;
   }
@@ -1116,11 +1157,38 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   editor.spellcheck = false;
   editor.value = view?.clean ?? "";
   editor.placeholder = "Write clean body text. TeX source can stay as $...$.";
+  try {
+    const draft = JSON.parse(localStorage.getItem(draftKey(node.pieceId)) ?? "null");
+    if (draft && draft.text !== editor.value) {
+      const recovery = document.createElement("button");
+      recovery.textContent = "恢复未保存的编辑";
+      recovery.addEventListener("click", () => {
+        editor.value = draft.text;
+        applyMode(surface, "source"); editor.focus();
+        recovery.remove();
+        setStatus("已恢复草稿。原文件未改变；请检查挂接来源后继续编辑。", true);
+      });
+      body.prepend(recovery);
+    }
+  } catch { /* Ignore malformed draft preferences. */ }
+
   if (view && view.damage.length > 0) {
     editor.readOnly = true;
   }
   paintHighlights(highlights, editor.value, view?.rivets ?? [], openRivetIds(state.nodes, node.id));
+  let inputBefore = editor.value, inputStart = 0, inputEnd = 0, inputType = "";
+  editor.addEventListener("beforeinput", (event) => {
+    inputBefore = editor.value; inputStart = editor.selectionStart; inputEnd = editor.selectionEnd;
+    inputType = event.inputType;
+  });
   editor.addEventListener("input", () => {
+    const key = JSON.stringify([state.root, node.pieceId]);
+    const history = inputHistory.get(key) ?? [];
+    history.push(inputChange(inputBefore, editor.value, inputStart, inputEnd, inputType));
+    inputHistory.set(key, history);
+    inputBefore = editor.value;
+    try { localStorage.setItem(draftKey(node.pieceId), JSON.stringify({ text: editor.value, expected: state.views[node.pieceId]?.clean })); } catch { /* best effort */ }
+
     paintHighlights(
       highlights,
       editor.value,
@@ -1189,25 +1257,40 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
         label: "New side",
         disabled: damaged,
         run: () => {
-          hangFromHere(undefined);
+          if (!sourceOn && selected) {
+            editor.setSelectionRange(selected.start, selected.end);
+            void hangFromEditor(node.id, editor, undefined);
+          } else hangFromHere(undefined);
         },
       },
       {
         label: "Hang existing…",
         disabled: damaged,
         run: async () => {
-          const start = editor.selectionStart;
-          const end = editor.selectionEnd;
+          const start = selected?.start ?? editor.selectionStart;
+          const end = selected?.end ?? editor.selectionEnd;
           const sideId = await promptExistingSide(node.pieceId, false);
           if (sideId) {
             editor.setSelectionRange(start, end);
-            hangFromHere(sideId);
+            if (!sourceOn && selected) void hangFromEditor(node.id, editor, sideId);
+            else hangFromHere(sideId);
           }
         },
       },
     ]);
   });
   rendered.addEventListener("click", (ev) => {
+    if (!window.getSelection()?.isCollapsed) return;
+    const mathematical = (ev.target as HTMLElement).closest<HTMLElement>("[data-math-rivets]");
+    if (mathematical) {
+      const ids = mathematical.dataset.mathRivets!.split(" ");
+      const specs = state.views[node.pieceId]?.rivets.filter(r => ids.includes(r.id) && r.to) ?? [];
+      if (specs.length === 1) void toggleSideColumn(node.id, specs[0].to!, specs[0].id);
+      else if (specs.length > 1) showCtxMenu(ev, specs.map(spec => ({
+        label: titleOf(spec.to!), run: () => { void toggleSideColumn(node.id, spec.to!, spec.id); },
+      })));
+      return;
+    }
     const mark = (ev.target as HTMLElement).closest("mark[data-rivet]") as HTMLElement | null;
     const rivetId = mark?.dataset.rivet;
     if (!rivetId) {
@@ -1672,6 +1755,33 @@ function renderCard(node: OpenNode): HTMLElement {
   const card = document.createElement("article");
   card.className = "card";
 
+  const pinKey = sidePinId(parent?.pieceId ?? "", node.viaRivetId ?? "");
+  card.dataset.sidePinId = pinKey;
+  const pin = document.createElement("button");
+  pin.type = "button";
+  pin.className = "side-pin";
+  const paintPin = (surface: HTMLElement): void => {
+    const pinned = state.sidePins.has(pinKey);
+    surface.dataset.sidePinned = String(pinned);
+    const button = surface.querySelector<HTMLButtonElement>(".side-pin") ?? pin;
+    button.textContent = pinned ? "Unpin" : "Pin";
+    button.setAttribute("aria-pressed", String(pinned));
+    button.title = pinned ? "取消固定，恢复随来源显隐" : "固定侧注：来源滚出视口时仍保持显示";
+  };
+  paintPin(card);
+  pin.addEventListener("click", () => {
+    if (state.sidePins.has(pinKey)) state.sidePins.delete(pinKey);
+    else state.sidePins.add(pinKey);
+    const saved = saveSidePins(localStorage, state.root ?? "", state.sidePins);
+    for (const surface of el.columns.querySelectorAll<HTMLElement>(".card")) {
+      if (surface.dataset.sidePinId === pinKey) paintPin(surface);
+    }
+    scheduleChrome();
+    setStatus(saved
+      ? (state.sidePins.has(pinKey) ? "已固定侧注，来源滚出视口时仍保持显示。" : "已取消固定，恢复随来源显隐。")
+      : "已在本次会话更新固定状态，但无法保存偏好；重启后可能不保留。", !saved);
+  });
+
   const head = document.createElement("div");
   head.className = "card-hd";
   const titles = document.createElement("div");
@@ -1721,7 +1831,7 @@ function renderCard(node: OpenNode): HTMLElement {
     detach.disabled = true;
     try { await detachNode(node); } finally { detach.disabled = false; }
   };
-  head.append(titles, rename, close, detach, drop);
+  head.append(titles, pin, rename, close, detach, drop);
   card.append(head);
   bindSurface(node, card);
   const heightKey = cardHeightKey(state.root ?? "", node.id);
@@ -1847,7 +1957,7 @@ function flushPersist(id: string, editor: HTMLTextAreaElement): void {
 
 async function persistNow(id: string, clean: string): Promise<void> {
   const before = state.views[id]?.clean;
-  const result = await window.intro.persistClean(id, clean);
+  const result = await saveSource(id, clean);
   if (!result.ok) {
     setStatus(result.error, true);
     return;
@@ -1924,6 +2034,8 @@ async function hangFromEditor(
     setStatus("Select a span in this column first.", true);
     return;
   }
+  const saved = await saveSource(host.pieceId, editor.value);
+  if (!saved.ok) { setStatus(saved.error, true); return; }
   const result = await window.intro.hangSide({
     hostId: host.pieceId,
     start,
@@ -2094,6 +2206,7 @@ document.addEventListener("pointerdown", (ev) => {
   }
 });
 new ResizeObserver(scheduleChrome).observe(el.board);
+void document.fonts.ready.then(scheduleChrome);
 
 bindVSplitter(el.splitSidebar, {
   getWidth: () => el.sidebar.getBoundingClientRect().width,

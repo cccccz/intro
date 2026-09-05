@@ -357,6 +357,16 @@ body.is-col-resizing .pdf-overlay {
   font-size: 12px;
 }
 
+.card-hd .side-pin {
+  white-space: nowrap;
+}
+
+.card-hd .side-pin[aria-pressed="true"] {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
 .column.stack .card-body {
   flex: 1;
   min-height: 160px;
@@ -473,6 +483,13 @@ body.is-col-resizing .pdf-overlay {
 }
 
 .body-rendered mark.open { background: var(--mark-open); }
+.math-rivet { cursor: pointer; }
+.body-rendered { isolation: isolate; }
+.math-regions { position: absolute; left: 0; top: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.math-regions rect { fill: var(--mark); }
+.math-regions rect.open { fill: var(--mark-open); }
+.math-regions rect.hot { stroke: var(--accent); stroke-width: 1.5px; }
+.math-anchor-warning { display: block; font-size: 12px; color: var(--danger); }
 
 .body-rendered mark.hot {
   outline: 1.5px solid var(--accent);

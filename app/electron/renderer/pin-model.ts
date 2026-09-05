@@ -1,3 +1,4 @@
+import { mathSelection } from "./math-anchors.ts";
 export type TextAnchor = { start: number; end: number; quote: string; before: string; after: string };
 
 export function textAnchor(source: string, start: number, end: number): TextAnchor {
@@ -37,6 +38,8 @@ export function renderedSelection(pane: HTMLElement, source: string): { start: n
   if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
   const range = selection.getRangeAt(0).cloneRange();
   if (!pane.contains(range.startContainer) || !pane.contains(range.endContainer)) return null;
+  const mathematical = mathSelection(range);
+  if (mathematical) return mathematical;
   const elementOf = (node: Node): Element | null => node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
   const mathOf = (node: Node): Element | null => elementOf(node)?.closest(".katex-display, .katex") ?? null;
   const firstMath = mathOf(range.startContainer);

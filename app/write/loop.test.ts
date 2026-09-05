@@ -14,6 +14,8 @@ import {
   openRoot,
   openSide,
 } from "./session.ts";
+import { relocateAnchors } from "./anchor-edits.ts";
+import { inputChange, batchTo } from "../electron/renderer/input-edits.ts";
 
 const temps: string[] = [];
 
@@ -30,6 +32,46 @@ afterEach(() => {
 });
 
 describe("M1 write loop on disk", () => {
+  it("relocates nested formula anchors across edits and reopen without changing side IDs", () => {
+    const lib = tmpLibrary();
+    const text = String.raw`before $$x+\frac{b}{c}$$ after`;
+    const host = lib.createPiece({title:"Math title",body:text});
+    const b = text.indexOf("{b}")+1;
+    const outer = hangSide(lib,host.id,{start:text.indexOf("x+"),end:text.indexOf("$$ after")});
+    const inner = hangSide(lib,host.id,{start:b,end:b+1});
+    const inserted = "prefix "+text;
+    persistClean(lib,host.id,inserted);
+    let view = pieceView(new Library(lib.root).load(host.id));
+    assert.equal(view.title,"Math title");
+    assert.equal(view.rivets.find(r=>r.id===inner.rivetId)!.start,b+7);
+    const changed=inserted.slice(0,b+7)+"beta"+inserted.slice(b+8);
+    persistClean(lib,host.id,changed,{expected:inserted,edits:[{start:b+7,end:b+8,text:"beta"}]});
+    view=pieceView(lib.load(host.id));
+    const anchor=view.rivets.find(r=>r.id===inner.rivetId)!;
+    assert.equal(changed.slice(anchor.start,anchor.end),"beta");
+    assert.equal(anchor.to,inner.side.id);
+    assert.equal(view.rivets.find(r=>r.id===outer.rivetId)!.to,outer.side.id);
+    const body=lib.load(host.id).body;
+    assert.throws(()=>persistClean(lib,host.id,"all removed"),/未保存/);
+    assert.equal(lib.load(host.id).body,body);
+    assert.equal(lib.load(inner.side.id).body,"");
+  });
+  it("uses actual input history for repeated text and multiple edits", () => {
+    const before="aaaa middle z";
+    const first=inputChange(before,"aaaaa middle z",0,0,"insertText");
+    const second=inputChange(first.after,"aaaaa middle zz",first.after.length,first.after.length,"insertText");
+    const batch=batchTo([first,second],before,second.after)!;
+    const result=relocateAnchors(before,second.after,[{id:"anchor",start:1,end:3}],batch);
+    assert.deepEqual(result,[{id:"anchor",start:2,end:4}]);
+    assert.throws(()=>relocateAnchors("external",second.after,result,batch),/已变化/);
+    assert.throws(()=>relocateAnchors(before,"different",result,batch),/不一致/);
+  });
+  it("deleting before an anchor moves it; deleting its source refuses instead of dropping it", () => {
+    const specs=[{id:"anchor",start:4,end:8}];
+    assert.deepEqual(relocateAnchors("abc term xyz","term xyz",specs),[{id:"anchor",start:0,end:4}]);
+    assert.throws(()=>relocateAnchors("abc term xyz","abc  xyz",specs),/未保存/);
+    assert.throws(()=>relocateAnchors("abc term xyz","abc rm xyz",[{id:"anchor",start:5,end:8}]),/未保存/);
+  });
   it("pin edits update only the excerpt and shift later rivets", () => {
     const lib = tmpLibrary();
     const host = lib.createPiece({ body: "alpha beta gamma" });

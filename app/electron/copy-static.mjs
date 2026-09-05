@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { instrumentKatex } from "./katex-source-map.mjs";
 
 const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.resolve(electronDir, "../dist/electron");
@@ -21,7 +22,8 @@ const vendorDest = path.join(rendererDest, "vendor");
 fs.mkdirSync(path.join(vendorDest, "fonts"), { recursive: true });
 
 const katexSrc = path.resolve(electronDir, "../../node_modules/katex/dist");
-fs.copyFileSync(path.join(katexSrc, "katex.min.js"), path.join(vendorDest, "katex.min.js"));
+const katexVersion = JSON.parse(fs.readFileSync(path.join(katexSrc, "../package.json"), "utf8")).version;
+fs.writeFileSync(path.join(vendorDest, "katex.min.js"), instrumentKatex(fs.readFileSync(path.join(katexSrc, "katex.js"), "utf8"), katexVersion));
 fs.copyFileSync(path.join(katexSrc, "katex.min.css"), path.join(vendorDest, "katex.min.css"));
 for (const name of fs.readdirSync(path.join(katexSrc, "fonts"))) {
   fs.copyFileSync(path.join(katexSrc, "fonts", name), path.join(vendorDest, "fonts", name));

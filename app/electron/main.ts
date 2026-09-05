@@ -6,6 +6,7 @@ import { Library } from "../library/index.ts";
 import { editExcerpt, detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
 import type { PdfAnchor } from "../pdf/overlay.ts";
 import { IPC } from "./api.ts";
+import type { EditBatch } from "../write/anchor-edits.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -121,9 +122,9 @@ ipcMain.handle(IPC.loadPiece, async (_e, id: string) => {
   }
 });
 
-ipcMain.handle(IPC.persistClean, async (_e, id: string, clean: string) => {
+ipcMain.handle(IPC.persistClean, async (_e, id: string, clean: string, batch?: EditBatch) => {
   try {
-    return { ok: true, piece: pieceView(persistClean(requireLib(), id, clean)) };
+    return { ok: true, piece: pieceView(persistClean(requireLib(), id, clean, batch)) };
   } catch (err) {
     return fail(err);
   }

@@ -1,3 +1,4 @@
+import { mathRegions } from "./math-regions.ts";
 /** Boxes on the current host surface. Not stored; not SoT. */
 export type AnchorRect = {
   left: number;
@@ -60,6 +61,9 @@ export function firstPaintedRects(nodes: Iterable<RectBox>): AnchorRect[] {
  */
 export function rectsForRivet(host: ParentNode, rivetId: string): AnchorRect[] {
   // Chrome lists also use data-rivet for hover; those buttons are not geometry.
+  const math = host.querySelectorAll(`[data-math-rivets~="${CSS.escape(rivetId)}"]`);
+  const mathRects = Array.from(math).flatMap(node => Array.from(node.getClientRects(), clientToAnchor));
+  if (mathRects.length) return mathRegions(mathRects);
   const sel = `mark[data-rivet="${CSS.escape(rivetId)}"], .pdf-hl[data-rivet="${CSS.escape(rivetId)}"]`;
   return firstPaintedRects(host.querySelectorAll(sel));
 }

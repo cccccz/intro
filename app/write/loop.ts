@@ -11,6 +11,7 @@ import {
   ulid,
 } from "../marks/index.ts";
 import type { Damage, RivetSpec } from "../marks/types.ts";
+import { relocateAnchors, type EditBatch } from "./anchor-edits.ts";
 import {
   OverlayError,
   addOverlayRivet,
@@ -72,12 +73,6 @@ export function pieceView(piece: Piece): PieceView {
   };
 }
 
-function specsThatFit(specs: readonly RivetSpec[], clean: string): RivetSpec[] {
-  return specs.filter(
-    (spec) => spec.start >= 0 && spec.end <= clean.length && spec.start < spec.end,
-  );
-}
-
 function requireTextHost(lib: Library, id: string): Piece {
   const piece = lib.load(id);
   if (piece.medium !== "text") {
@@ -87,10 +82,10 @@ function requireTextHost(lib: Library, id: string): Piece {
 }
 
 /**
- * Write clean editor text back, keeping rivets whose ranges still fit.
+ * Write clean editor text back, relocating rivets through validated edits.
  * Damaged hosts are refused (same as addMark). PDF hosts are refused.
  */
-export function persistClean(lib: Library, id: string, clean: string): Piece {
+export function persistClean(lib: Library, id: string, clean: string, batch?: EditBatch): Piece {
   const current = requireTextHost(lib, id);
   const parsed = parse(current.body);
   if (parsed.damage.length > 0) {
@@ -99,7 +94,7 @@ export function persistClean(lib: Library, id: string, clean: string): Piece {
   if (strip(current.body) === clean) {
     return current;
   }
-  const specs = specsThatFit(flattenRivetSpecs(parsed.rivets), clean);
+  const specs = relocateAnchors(strip(current.body), clean, flattenRivetSpecs(parsed.rivets), batch);
   return lib.save(id, add(clean, specs));
 }
 

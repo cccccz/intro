@@ -26,7 +26,7 @@ contextBridge.exposeInMainWorld("intro", {
   createPiece: (opts) => ipcRenderer.invoke(IPC.createPiece, opts),
   setPieceTitle: (id, title) => ipcRenderer.invoke(IPC.setPieceTitle, id, title),
   loadPiece: (id) => ipcRenderer.invoke(IPC.loadPiece, id),
-  persistClean: (id, clean) => ipcRenderer.invoke(IPC.persistClean, id, clean),
+  persistClean: (id, clean, batch) => ipcRenderer.invoke(IPC.persistClean, id, clean, batch),
   hangSide: (opts) => ipcRenderer.invoke(IPC.hangSide, opts),
   attachPdf: () => ipcRenderer.invoke(IPC.attachPdf),
   readPdf: (id) => ipcRenderer.invoke(IPC.readPdf, id),

@@ -1,4 +1,5 @@
 import type { Damage, RivetSpec } from "../marks/types.ts";
+import type { EditBatch } from "../write/anchor-edits.ts";
 import type { OverlayRivet, PdfAnchor } from "../pdf/overlay.ts";
 
 export type PieceDto = {
@@ -51,6 +52,7 @@ export type IntroApi = {
   persistClean: (
     id: string,
     clean: string,
+    batch?: EditBatch,
   ) => Promise<Ok<{ piece: PieceDto }> | Err>;
   hangSide: (opts: {
     hostId: string;
