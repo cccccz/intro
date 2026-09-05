@@ -2,6 +2,8 @@
 
 个人用的本地探究工作区。产品结论见 [`结论.md`](结论.md)，工程约定见 [`ENGINEERING.md`](ENGINEERING.md)。`mockup/` 只是假页面；真实现放在 [`app/`](app/README.md)。
 
+**当前进入学习使用阶段。** 封存使用版与开发分离，后续版本保护已有 library；边界和已知编辑限制见 [`STUDY_RELEASE.md`](STUDY_RELEASE.md)。下列命令用于开发目录，不作为日常学习版入口。
+
 ```
 npm install
 npm test
