@@ -1,6 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const IPC = {
+  aiEdit: "ai:edit", aiModels: "ai:models", aiApply: "ai:apply", aiProvideContext: "ai:context",
+  aiStart: "ai:start",
+  aiStatus: "ai:status",
+  aiCancel: "ai:cancel",
+  aiList: "ai:list",
+  aiLogin: "ai:login",
+  aiCommit: "ai:commit",
+
   editExcerpt: "piece:editExcerpt",
   detachSide: "piece:detachSide",
   openLibrary: "library:open",
@@ -18,6 +26,22 @@ const IPC = {
 };
 
 contextBridge.exposeInMainWorld("intro", {
+  aiModels: () => ipcRenderer.invoke(IPC.aiModels),
+  aiEdit: (id, expected, markdown) => ipcRenderer.invoke(IPC.aiEdit, id, expected, markdown),
+  aiApply: (id, undo) => ipcRenderer.invoke(IPC.aiApply, id, undo),
+  aiProvideContext: (id, result) => ipcRenderer.invoke(IPC.aiProvideContext, id, result),
+  onAiRead: (cb) => {
+    const listener = (_event, request) => cb(request);
+    ipcRenderer.on("ai:read", listener);
+    return () => ipcRenderer.removeListener("ai:read", listener);
+  },
+  aiStart: (arg) => ipcRenderer.invoke(IPC.aiStart, arg),
+  aiStatus: (arg) => ipcRenderer.invoke(IPC.aiStatus, arg),
+  aiCancel: (arg) => ipcRenderer.invoke(IPC.aiCancel, arg),
+  aiList: (arg) => ipcRenderer.invoke(IPC.aiList, arg),
+  aiLogin: (arg) => ipcRenderer.invoke(IPC.aiLogin, arg),
+  aiCommit: (arg) => ipcRenderer.invoke(IPC.aiCommit, arg),
+
   editExcerpt: (id, expected, start, end, text) => ipcRenderer.invoke(IPC.editExcerpt, id, expected, start, end, text),
   detachSide: (hostId, rivetId, clean) => ipcRenderer.invoke(IPC.detachSide, hostId, rivetId, clean),
   openLibrary: () => ipcRenderer.invoke(IPC.openLibrary),

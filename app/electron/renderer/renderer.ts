@@ -1,3 +1,4 @@
+import type { AiStart, AiJobView, AiModel, AiContext, AiSelection } from "./ai-types.ts";
 import {
   attachPoint,
   clientToAnchor,
@@ -33,6 +34,8 @@ import {
   forgetAllPdfDocs,
   mountPdfView,
   renderPdfExcerpt,
+  capturePdfContext,
+  readPdfContextPage,
   type PdfAnchor,
   type OverlayRivet,
   type PdfOutlineEntry,
@@ -77,6 +80,18 @@ type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: string };
 
 type IntroApi = {
+  aiEdit: (id: string, expected: string, markdown: string) => Promise<Ok<{ job: AiJobView }> | Err>;
+  aiModels: () => Promise<Ok<{ models: AiModel[] }> | Err>;
+  aiApply: (id: string, undo?: boolean) => Promise<Ok<{ piece: PieceDto }> | Err>;
+  aiProvideContext: (id: string, result: { context?: AiContext; error?: string }) => Promise<void>;
+  onAiRead: (callback: (request: { id: string; root: string; pieceId: string; page: number; textOnly?: boolean }) => void) => () => void;
+  aiStart: (request: AiStart) => Promise<Ok<{ job: AiJobView }> | Err>;
+  aiStatus: (id: string) => Promise<Ok<{ job: AiJobView }> | Err>;
+  aiCancel: (id: string) => Promise<Ok<{ job: AiJobView }> | Err>;
+  aiList: () => Promise<Ok<{ jobs: AiJobView[] }> | Err>;
+  aiLogin: () => Promise<Ok<{}> | Err>;
+  aiCommit: (id: string) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
+
   editExcerpt: (id: string, expected: string, start: number, end: number, text: string) => Promise<Ok<{ piece: PieceDto }> | Err>;
   detachSide: (hostId: string, rivetId: string, clean?: string) => Promise<Ok<{ host: PieceDto }> | Err>;
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
@@ -1233,6 +1248,8 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
       ? { start: editor.selectionStart, end: editor.selectionEnd, expanded: false }
       : renderedSelection(rendered, editor.value);
     showCtxMenu(ev, [
+      { label: "Ask Codex…", disabled: damaged || !selected || selected.start === selected.end,
+        run: () => { if (selected) void askCodex(node.id, { kind: "text", expected: editor.value, start: selected.start, end: selected.end }); } },
       {
         label: selected?.expanded ? "置顶选区（完整公式／段落）" : "置顶选区",
         disabled: !selected || selected.start === selected.end,
@@ -1528,6 +1545,8 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
       setStatus("Drag a region on the PDF first.", true);
     }
     showCtxMenu(ev, [
+      { label: "Ask Codex…", disabled: !hasSel,
+        run: () => { if (pinnedSelection) void askCodex(node.id, { kind: "pdf", anchors: structuredClone(pinnedSelection.anchors) }); } },
       {
         label: "置顶选区",
         disabled: !pinnedSelection?.anchors.length,
@@ -1831,7 +1850,13 @@ function renderCard(node: OpenNode): HTMLElement {
     detach.disabled = true;
     try { await detachNode(node); } finally { detach.disabled = false; }
   };
-  head.append(titles, pin, rename, close, detach, drop);
+  const aiButton = document.createElement('button'); aiButton.textContent = 'AI…';
+  aiButton.onclick = ev => showCtxMenu(ev, [
+    { label: '向这篇笔记提问…', run: () => askWholeNote(node.id, 'note') },
+    { label: '改进这篇笔记…', run: () => askWholeNote(node.id, 'revise') },
+  ]);
+  aiButton.disabled = view?.medium !== 'text';
+  head.append(titles, pin, aiButton, rename, close, detach, drop);
   card.append(head);
   bindSurface(node, card);
   const heightKey = cardHeightKey(state.root ?? "", node.id);
@@ -2017,6 +2042,238 @@ async function hangFromPdf(parentId: string, sideId: string | undefined): Promis
       ? `Hung existing ${result.side.id} from PDF overlay ${result.rivetId}`
       : `Created side ${result.side.id} from PDF overlay ${result.rivetId}`,
   );
+}
+
+type AiOptions = { question: string; model: string; effort: string; web: boolean };
+function askCodexQuestion(images: boolean, revise: boolean): Promise<AiOptions | null> {
+  return new Promise(resolve => {
+    const dialog = document.createElement('dialog'); dialog.className = 'piece-picker';
+    const form = document.createElement('form');
+    const title = document.createElement('h2'); title.textContent = revise ? '改进这篇笔记' : 'Ask Codex';
+    const input = document.createElement('textarea'); input.rows = 4; input.className = 'ai-question';
+    input.placeholder = revise ? '想怎样改进？例如补充背景、纠错、重新组织，或写得更清楚。' : '你想了解什么？解释概念、比较观点、查背景，或者其他问题。'; input.setAttribute('aria-label', '向 Codex 提问');
+    const model = document.createElement('select'); model.setAttribute('aria-label', '模型');
+    const effort = document.createElement('select'); effort.setAttribute('aria-label', '推理强度');
+    const webLabel = document.createElement('label'), web = document.createElement('input'); web.type = 'checkbox'; web.checked = localStorage.getItem('intro:ai:web') !== 'off'; webLabel.append(web, ' 允许联网查资料');
+    const hint = document.createElement('p'); hint.className = 'muted'; hint.textContent = '正在读取账户支持的模型…';
+    const send = document.createElement('button'); send.type = 'submit'; send.textContent = revise ? '生成修改稿' : '生成笔记'; send.disabled = true;
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消'; cancel.onclick = () => dialog.close();
+    const login = document.createElement('button'); login.type = 'button'; login.textContent = '连接 Codex'; login.hidden = true;
+    login.onclick = async () => { const r = await window.intro.aiLogin(); hint.textContent = r.ok ? '请在浏览器完成登录，再关闭此窗口重新提问。' : r.error; };
+    let answer: AiOptions | null = null;
+    form.onsubmit = ev => {
+      ev.preventDefault(); if (send.disabled) return;
+      answer = { question: input.value.trim() || (revise ? '根据内容需要改进这篇笔记，使其准确、清楚且适合今后阅读。' : '帮助我理解选中的内容，整理成一篇有用的笔记。'), model: model.value, effort: effort.value, web: web.checked };
+      localStorage.setItem('intro:ai:model', model.value); localStorage.setItem('intro:ai:effort', effort.value); localStorage.setItem('intro:ai:web', web.checked ? 'on' : 'off'); dialog.close();
+    };
+    dialog.onclose = () => { dialog.remove(); resolve(answer); };
+    form.append(title, input, model, effort, webLabel, hint, send, cancel, login); dialog.append(form); document.body.append(dialog); dialog.showModal(); input.focus();
+    void window.intro.aiModels().then(result => {
+      if (!dialog.isConnected) return;
+      if (!result.ok) { hint.textContent = result.error; login.hidden = false; return; }
+      for (const m of result.models) { const option = document.createElement('option'); option.value = m.id; option.textContent = m.label + (images && !m.images ? '（不支持图片）' : ''); option.disabled = images && !m.images; model.append(option); }
+      const available = result.models.filter(m => !images || m.images);
+      const selected = available.find(m => m.id === localStorage.getItem('intro:ai:model')) ?? available.find(m => m.isDefault) ?? available[0];
+      if (!selected) { hint.textContent = '没有适合本次输入的模型。'; return; }
+      model.value = selected.id;
+      const updateEffort = (): void => { const m = result.models.find(m => m.id === model.value)!; effort.replaceChildren(); for (const e of m.efforts) { const option = document.createElement('option'); option.value = e; option.textContent = e; effort.append(option); } const saved = localStorage.getItem('intro:ai:effort'); effort.value = saved && m.efforts.includes(saved) ? saved : m.defaultEffort; };
+      model.onchange = updateEffort; updateEffort(); send.disabled = false;
+      hint.textContent = revise ? '会发送当前笔记和来源上下文；修改稿先预览，再由你应用。' : '会发送选区、当前笔记和来源上下文；完成后自动保存为 side。';
+    }).catch(error => { hint.textContent = String(error); login.hidden = false; });
+  });
+}
+
+function aiPanel(title: string): { panel: HTMLElement; message: HTMLElement; body: HTMLElement; actions: HTMLElement } {
+  const panel = document.createElement('aside'); panel.className = 'ai-pending'; panel.setAttribute('aria-label', 'Codex 临时 side');
+  const heading = document.createElement('strong'); heading.textContent = title;
+  const message = document.createElement('p'); message.setAttribute('role', 'status');
+  const body = document.createElement('div'); body.className = 'ai-answer';
+  const actions = document.createElement('div'); actions.className = 'ai-actions';
+  panel.append(heading, message, body, actions); document.body.append(panel);
+  return { panel, message, body, actions };
+}
+
+async function askCodex(parentId: string, selection: AiSelection, intent: 'note' | 'revise' = 'note'): Promise<void> {
+  const root = state.root, parent = state.nodes.find(n => n.id === parentId);
+  if (!root || !parent) return;
+  const options = await askCodexQuestion(selection.kind === 'pdf', intent === 'revise'); if (options === null) return;
+  if (state.root !== root) { setStatus('资料库已切换，请重新选择。', true); return; }
+  const ui = aiPanel('Ask Codex'); ui.message.textContent = '正在准备选区和附近原文…';
+  const cancel = document.createElement('button'); cancel.textContent = '取消'; ui.actions.append(cancel);
+  let cancelled = false, jobId: string | undefined;
+  cancel.onclick = () => { cancelled = true; if (jobId) void window.intro.aiCancel(jobId); ui.panel.remove(); };
+  try {
+    const request: AiStart = { root, hostId: parent.pieceId, selection, ...options, intent, contexts: [] };
+    if (selection.kind === 'text') {
+      const editor = surfaceOf(parentId)?.querySelector<HTMLTextAreaElement>('textarea.editor');
+      if (editor && editor.value !== selection.expected) throw new Error('原文已变化，请重新选择。');
+      const saved = await saveSource(parent.pieceId, selection.expected);
+      if (!saved.ok) throw new Error(saved.error);
+    } else {
+      const snapshot = await capturePdfContext(parent.pieceId, async () => {
+        if (state.root !== root) throw new Error('资料库已切换');
+        const pdf = await window.intro.readPdf(parent.pieceId); if (!pdf.ok) throw new Error(pdf.error); return pdf.data;
+      }, selection.anchors[0]!);
+      request.contexts = snapshot.contexts.map(c => ({ ...c, label: `${titleOf(parent.pieceId)} · ${c.label}` }));
+      request.selectionImage = snapshot.selectionImage;
+    }
+    if (cancelled) return;
+    if (state.root !== root) throw new Error('资料库已切换');
+    const started = await window.intro.aiStart(request); if (!started.ok) throw new Error(started.error);
+    jobId = started.job.id;
+    if (cancelled) { await window.intro.aiCancel(jobId); return; }
+    let job = started.job;
+    while (job.status === 'running' && !cancelled) {
+      ui.message.textContent = job.progress;
+      await new Promise(resolve => setTimeout(resolve, 750));
+      const status = await window.intro.aiStatus(jobId); if (!status.ok) throw new Error(status.error); job = status.job;
+    }
+    if (cancelled) return;
+    if (job.status !== 'ready' || !job.answer) throw new Error(job.error || job.progress);
+    if (intent === 'revise') { ui.panel.remove(); showImprovement(job); return; }
+    ui.body.innerHTML = renderHtml(job.answer.markdown, [], [], katexMath);
+    const changed = selection.kind === 'text' && (
+      state.views[parent.pieceId]?.clean !== selection.expected ||
+      Array.from(el.columns.querySelectorAll<HTMLElement>('[data-piece-id]')).some(surface => surface.dataset.pieceId === parent.pieceId && surface.querySelector<HTMLTextAreaElement>('textarea.editor')?.value !== selection.expected)
+    );
+    if (state.root !== root || changed) throw new Error('来源已变化或资料库已切换。回答已保留，可从顶部「Codex 回答」查看并复制。');
+    if (ui.body.querySelector('.katex-error')) ui.message.textContent = '个别公式暂以源码显示，笔记仍会保存，可在 Source 修正。';
+    const saved = await window.intro.aiCommit(job.id); if (!saved.ok) throw new Error(saved.error);
+    if (state.root !== root) { ui.message.textContent = '回答已保存到原资料库。'; return; }
+    state.views[saved.host.id] = saved.host; state.views[saved.side.id] = saved.side;
+    const listed = await window.intro.listPieces(); if (listed.ok) state.pieces = listed.pieces;
+    const openParent = state.nodes.find(n => n.id === parentId && n.pieceId === parent.pieceId);
+    if (openParent) {
+      state.nodes = openSide(state.nodes, parentId, saved.side.id, saved.rivetId);
+      state.modes[saved.rivetId] = 'rendered'; pendingAlign = saved.rivetId;
+      state.sidePins.add(sidePinId(saved.host.id, saved.rivetId));
+      saveSidePins(localStorage, state.root!, state.sidePins);
+      renderColumns(); setHot(saved.rivetId);
+    }
+    renderSidebar(); ui.panel.remove(); setStatus('Codex 回答已保存为 side。');
+  } catch (error) {
+    if (cancelled) return;
+    ui.message.textContent = error instanceof Error ? error.message : String(error);
+    cancel.textContent = '关闭'; cancel.onclick = () => ui.panel.remove();
+    const login = document.createElement('button'); login.textContent = '连接 Codex';
+    login.onclick = async () => { const result = await window.intro.aiLogin(); ui.message.textContent = result.ok ? '请在浏览器完成登录，然后重新选择并提问。' : result.error; };
+    ui.actions.append(login);
+  }
+}
+
+async function showCodexDrafts(): Promise<void> {
+  const listed = await window.intro.aiList();
+  if (!listed.ok) { setStatus(listed.error, true); return; }
+  const ui = aiPanel('Codex 回答草稿');
+  ui.message.textContent = listed.jobs.length ? '回答可在这里编辑、保存草稿，再挂回原选区。' : '暂无待处理回答。选区后右键 Ask Codex。';
+  const close = document.createElement('button'); close.textContent = '关闭'; close.onclick = () => ui.panel.remove();
+  const login = document.createElement('button'); login.textContent = '连接 Codex';
+  login.onclick = async () => { const r = await window.intro.aiLogin(); ui.message.textContent = r.ok ? '请在浏览器完成登录。' : r.error; };
+  ui.actions.append(close, login);
+  for (const job of listed.jobs) {
+    const row = document.createElement('section');
+    const title = document.createElement('p'); title.textContent = job.answer?.title || job.error || job.progress; row.append(title);
+    if (!job.answer && job.rawAnswer) {
+      const label = document.createElement('p'); label.textContent = '未通过校验的原始回答（仅供复制检查，未保存为 side）'; row.append(label);
+      const raw = document.createElement('textarea'); raw.readOnly = true; raw.value = job.rawAnswer; raw.rows = 8; raw.className = 'ai-question'; row.append(raw);
+    }
+    if (job.answer) {
+      const source = document.createElement('textarea'); source.readOnly = false; source.value = job.answer.markdown; source.rows = 8; source.className = 'ai-question';
+      source.setAttribute('aria-label', '回答源码，可编辑并保存'); row.append(source);
+      const saveDraft = document.createElement('button'); saveDraft.textContent = '保存草稿';
+      const persistDraft = async (): Promise<boolean> => {
+        const result = await window.intro.aiEdit(job.id, job.answer!.markdown, source.value);
+        if (!result.ok) { title.textContent = result.error; return false; }
+        job.answer = result.job.answer; source.value = job.answer!.markdown;
+        title.textContent = '草稿已保存'; return true;
+      };
+      saveDraft.onclick = async () => { saveDraft.disabled = true; try { await persistDraft(); } finally { saveDraft.disabled = false; } };
+      source.oninput = () => { title.textContent = '草稿有未保存修改，请保存草稿或挂回原选区'; };
+      row.append(saveDraft);
+      const attach = document.createElement('button'); attach.textContent = job.intent === 'revise' ? '预览修改稿' : '尝试挂回原选区';
+      attach.onclick = async () => {
+        if (!await persistDraft()) return;
+        if (job.intent === 'revise') { showImprovement(job); return; }
+        if (state.root !== job.root) { title.textContent = '请先打开原资料库。'; return; }
+        const dirty = Array.from(el.columns.querySelectorAll<HTMLElement>('[data-piece-id]')).some(surface => surface.dataset.pieceId === job.hostId && !!surface.querySelector<HTMLTextAreaElement>('textarea.editor') && surface.querySelector<HTMLTextAreaElement>('textarea.editor')!.value !== state.views[job.hostId]?.clean);
+        if (dirty) { title.textContent = '原文有未保存编辑，请先处理编辑后再挂接。'; return; }
+        attach.disabled = true;
+        const result = await window.intro.aiCommit(job.id);
+        if (!result.ok) { title.textContent = result.error; attach.disabled = false; return; }
+        if (state.root !== job.root) return;
+        state.views[result.host.id] = result.host; state.views[result.side.id] = result.side;
+        const pieces = await window.intro.listPieces(); if (pieces.ok) state.pieces = pieces.pieces;
+        const parent = state.nodes.find(n => n.pieceId === job.hostId);
+        if (parent) { state.nodes = openSide(state.nodes, parent.id, result.side.id, result.rivetId); state.modes[result.rivetId] = 'rendered'; pendingAlign = result.rivetId; }
+        renderSidebar(); renderColumns(); title.textContent = '已挂回原选区';
+      };
+      row.append(attach);
+    }
+    if (job.status === 'running') {
+      const stop = document.createElement('button'); stop.textContent = '取消生成'; stop.onclick = async () => { await window.intro.aiCancel(job.id); title.textContent = '已取消'; }; row.append(stop);
+    }
+    ui.body.append(row);
+  }
+}
+
+document.getElementById('btn-codex')?.addEventListener('click', () => { void showCodexDrafts(); });
+
+window.intro.onAiRead(request => {
+  void (async () => {
+    try {
+      if (state.root !== request.root) throw new Error('资料库已切换，停止读取原资料库。');
+      const context = await readPdfContextPage(request.pieceId, async () => {
+        if (state.root !== request.root) throw new Error('资料库已切换');
+        const result = await window.intro.readPdf(request.pieceId); if (!result.ok) throw new Error(result.error); return result.data;
+      }, request.page, request.textOnly);
+      if (state.root !== request.root) throw new Error('资料库已切换');
+      context.label = `${titleOf(request.pieceId)} · ${context.label}`;
+      await window.intro.aiProvideContext(request.id, { context });
+    } catch (error) { await window.intro.aiProvideContext(request.id, { error: String(error) }); }
+  })();
+});
+
+function askWholeNote(nodeId: string, intent: 'note' | 'revise'): void {
+  const node = state.nodes.find(n => n.id === nodeId); if (!node) return;
+  const clean = surfaceOf(nodeId)?.querySelector<HTMLTextAreaElement>('textarea.editor')?.value ?? state.views[node.pieceId]?.clean ?? '';
+  if (!clean.trim()) { setStatus('请先写下笔记内容。', true); return; }
+  void askCodex(nodeId, { kind: 'text', expected: clean, start: 0, end: clean.length }, intent);
+}
+
+function showImprovement(job: AiJobView): void {
+  if (!job.answer) return;
+  const ui = aiPanel('改进笔记 · 预览'); ui.panel.classList.add('ai-review');
+  const comparison = document.createElement('div'); comparison.className = 'ai-comparison';
+  for (const [label, text] of [['原文', job.original ?? ''], ['修改稿', job.answer.markdown]]) {
+    const section = document.createElement('section'), heading = document.createElement('h3'); heading.textContent = label!;
+    const body = document.createElement('div'); body.innerHTML = renderHtml(text!, [], [], katexMath); section.append(heading, body); comparison.append(section);
+  }
+  ui.body.append(comparison); ui.message.textContent = '确认内容后应用。已有子 side 的来源无法可靠保留时，会拒绝覆盖。';
+  const apply = document.createElement('button'); apply.textContent = '应用修改';
+  const undo = document.createElement('button'); undo.textContent = '撤销此次改进'; undo.hidden = true;
+  const close = document.createElement('button'); close.textContent = '保留草稿，关闭'; close.onclick = () => ui.panel.remove();
+  const write = async (revert: boolean): Promise<void> => {
+    if (state.root !== job.root) { ui.message.textContent = '请先返回原资料库。'; return; }
+    const surfaces = Array.from(el.columns.querySelectorAll<HTMLElement>('[data-piece-id]')).filter(s => s.dataset.pieceId === job.hostId);
+    if (surfaces.some(s => { const e = s.querySelector<HTMLTextAreaElement>('textarea.editor'); return e && e.value !== state.views[job.hostId]?.clean; })) { ui.message.textContent = '笔记有未保存编辑，请先处理编辑。'; return; }
+    if (!revert && comparison.querySelector('.katex-error')) { ui.message.textContent = '有公式无法渲染，请从草稿复制源码检查。'; return; }
+    apply.disabled = undo.disabled = true;
+    try {
+      const result = await window.intro.aiApply(job.id, revert); if (!result.ok) throw new Error(result.error);
+      if (state.root !== job.root) return;
+      const before = state.views[job.hostId]?.clean ?? result.piece.clean;
+      const timer = persistTimers.get(job.hostId); if (timer) clearTimeout(timer); persistTimers.delete(job.hostId);
+      inputHistory.delete(JSON.stringify([state.root, job.hostId]));
+      for (const surface of surfaces) { const editor = surface.querySelector<HTMLTextAreaElement>('textarea.editor'); if (editor) editor.value = result.piece.clean; }
+      state.views[job.hostId] = result.piece; pinBoard.sourceChanged(job.hostId, before, result.piece.clean);
+      renderColumns(); renderSidebar();
+      ui.message.textContent = revert ? '已撤销，恢复原笔记。' : '已应用，标题、笔记 ID 和已有关系保留。';
+      apply.hidden = !revert; undo.hidden = revert; close.textContent = '关闭';
+    } catch (error) { ui.message.textContent = String(error); }
+    finally { apply.disabled = undo.disabled = false; }
+  };
+  apply.onclick = () => { void write(false); }; undo.onclick = () => { void write(true); };
+  ui.actions.append(apply, undo, close);
 }
 
 async function hangFromEditor(

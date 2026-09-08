@@ -916,3 +916,13 @@ body.is-row-resizing { cursor: ns-resize !important; user-select: none; }
 .ctx-menu button:disabled {
   opacity: 0.45;
 }
+/* A generated answer stays outside document storage until its source is checked. */
+.ai-pending { position: fixed; right: 18px; top: 70px; bottom: 45px; width: min(460px, 85vw); z-index: 300; background: white; border: 1px solid #b6c9ef; box-shadow: 0 5px 24px #0002; padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+.ai-answer { flex: 1; overflow: auto; min-height: 0; overflow-wrap: anywhere; }
+.ai-answer .katex-display { overflow-x: auto; overflow-y: hidden; }
+.ai-actions { display: flex; gap: 8px; }
+.ai-question { display: block; width: 100%; box-sizing: border-box; font: inherit; resize: vertical; }
+.ai-review { width: min(1000px, 92vw); }
+.ai-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.ai-comparison section { min-width: 0; overflow-wrap: anywhere; }
+.piece-picker select { max-width: 100%; margin: 8px 8px 8px 0; padding: 6px; }

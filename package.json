@@ -5,10 +5,11 @@
   "main": "app/dist/electron/main.js",
   "scripts": {
     "mockup": "tsc -p mockup/tsconfig.json",
-    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test app/marks/marks.test.ts app/library/library.test.ts app/library/frontmatter.test.ts app/write/loop.test.ts app/pdf/overlay.test.ts app/electron/renderer/highlight.test.ts app/electron/renderer/geometry.test.ts app/electron/renderer/render.test.ts app/electron/renderer/pdf-window.test.ts app/electron/renderer/pdf-nav.test.ts app/electron/renderer/layout.test.ts app/electron/renderer/card-order.test.ts app/electron/renderer/card-height.test.ts app/electron/renderer/side-pins.test.ts app/electron/katex-source-map.test.mjs",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test app/marks/marks.test.ts app/library/library.test.ts app/library/frontmatter.test.ts app/write/loop.test.ts app/pdf/overlay.test.ts app/electron/renderer/highlight.test.ts app/electron/renderer/geometry.test.ts app/electron/renderer/render.test.ts app/electron/renderer/pdf-window.test.ts app/electron/renderer/pdf-nav.test.ts app/electron/renderer/layout.test.ts app/electron/renderer/card-order.test.ts app/electron/renderer/card-height.test.ts app/electron/renderer/side-pins.test.ts app/electron/katex-source-map.test.mjs app/ai/commit.test.ts app/ai/runtime.test.ts app/ai/revise.test.ts app/ai/document-text.test.ts app/ai/answer.test.ts",
     "typecheck:app": "tsc -p app/tsconfig.json && tsc -p app/electron/renderer/tsconfig.json --noEmit",
     "build:app": "tsc -p app/tsconfig.build.json && tsc -p app/electron/renderer/tsconfig.json && node app/electron/copy-static.mjs",
     "app": "npm run build:app && electron .",
+    "codex:check": "npm run build:app && node app/ai/doctor.mjs",
     "electron:dev": "npm run build:app && electron ."
   },
   "dependencies": {

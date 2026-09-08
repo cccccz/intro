@@ -11,3 +11,6 @@ npm run app
 ```
 
 打开空文件夹即可建库：写正文 → 划选 → New side → 再划再挂。或 **Open PDF…** 附入本地 PDF，框选区域挂侧边（侧车 overlay，不写回 PDF）。PDF 列可缩放 / 跳页 / 大纲；分栏可拖；篇名是 YAML `title:` 显示名，文件名 `{id}` 不变。详见 [`app/README.md`](app/README.md)。
+
+
+新电脑安装、Codex 登录与快速自检：见 [SETUP_WINDOWS.md](SETUP_WINDOWS.md)。Ask Codex 的功能与限制见 [app/ai/README.md](app/ai/README.md)。

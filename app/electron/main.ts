@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { AiService } from "../ai/service.ts";
+import type { AiStart, AiContext } from "./renderer/ai-types.ts";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +12,38 @@ import type { EditBatch } from "../write/anchor-edits.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+let ai: AiService | undefined;
+const contextWaiters = new Map<string, { resolve: (value: AiContext) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+function aiService(): AiService {
+  if (!ai) {
+    ai = new AiService(path.join(app.getPath("userData"), "codex-answers"));
+    ai.pdfReader = (root, pieceId, page, textOnly) => new Promise((resolve, reject) => {
+      if (!win || win.isDestroyed()) { reject(new Error("阅读窗口已关闭")); return; }
+      const id = crypto.randomUUID();
+      const timer = setTimeout(() => { contextWaiters.delete(id); reject(new Error("读取 PDF 上下文超时")); }, 45000);
+      contextWaiters.set(id, { resolve, reject, timer });
+      win.webContents.send("ai:read", { id, root, pieceId, page, textOnly });
+    });
+  }
+  return ai;
+}
+ipcMain.handle(IPC.aiProvideContext, (event, id: string, result: { context?: AiContext; error?: string }) => {
+  if (event.sender !== win?.webContents) return;
+  const waiter = contextWaiters.get(id); if (!waiter) return;
+  clearTimeout(waiter.timer); contextWaiters.delete(id);
+  if (result.context && result.context.text.length <= 100000 && (!result.context.image || result.context.image.length <= 12000000)) waiter.resolve(result.context);
+  else waiter.reject(new Error(result.error || "PDF 上下文无效"));
+});
+ipcMain.handle(IPC.aiModels, async () => { try { return { ok: true, models: await aiService().models() }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiEdit, (_event, id: string, expected: string, markdown: string) => { try { return { ok: true, job: aiService().editDraft(requireLib(), id, expected, markdown) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiApply, (_event, id: string, undo?: boolean) => { try { return { ok: true, piece: aiService().applyImprovement(requireLib(), id, undo) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiStart, (_e, request: AiStart) => { try { return { ok: true, job: aiService().start(requireLib(), request) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiStatus, (_e, id: string) => { try { return { ok: true, job: aiService().status(id) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiCancel, (_e, id: string) => { try { return { ok: true, job: aiService().cancel(id) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiList, () => { try { return { ok: true, jobs: aiService().list(requireLib().root) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiCommit, (_e, id: string) => { try { return { ok: true, ...aiService().commit(requireLib(), id) }; } catch (e) { return fail(e); } });
+ipcMain.handle(IPC.aiLogin, async () => { try { await shell.openExternal(await aiService().login()); return { ok: true }; } catch (e) { return fail(e); } });
+app.on("before-quit", () => ai?.close());
 let library: Library | null = null;
 let win: BrowserWindow | null = null;
 
@@ -44,6 +78,14 @@ function createWindow(): BrowserWindow {
     },
   });
   window.loadFile(path.join(here, "renderer", "index.html"));
+  // Research citations open in the user's browser, never replace the reading app.
+  window.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault(); if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
   return window;
 }
 

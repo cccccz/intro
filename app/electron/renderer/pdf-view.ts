@@ -39,6 +39,7 @@ type PdfViewport = {
 };
 
 type PdfPage = {
+  getTextContent: () => Promise<{ items: Array<{ str?: string; hasEOL?: boolean }> }>;
   getViewport: (opts: { scale: number }) => PdfViewport;
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
@@ -168,6 +169,50 @@ export async function renderPdfExcerpt(id: string, data: Uint8Array | (() => Pro
   await page.render({ canvasContext: context, viewport, transform: [1, 0, 0, 1, -box.left * viewport.width / 100, -box.top * viewport.height / 100] }).promise;
   canvas.setAttribute("aria-label", `PDF 第 ${anchor.page} 页选区`);
   return canvas;
+}
+
+/** Snapshot the selected page first, then adjacent pages, independent of visible canvases. */
+export async function capturePdfContext(id: string, data: () => Promise<Uint8Array>, anchor: PdfAnchor): Promise<{
+  contexts: Array<{ id: string; label: string; text: string; image: string }>;
+  selectionImage: string;
+}> {
+  const doc = await loadDocument(id, data);
+  const pages = [anchor.page, anchor.page - 1, anchor.page + 1].filter(n => n >= 1 && n <= doc.numPages);
+  const contexts = [];
+  for (const n of pages) {
+    const page = await doc.getPage(n);
+    const natural = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: Math.min(1.6, 1600 / Math.max(natural.width, natural.height)) });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+    const text = (await page.getTextContent()).items.map(i => (i.str ?? '') + (i.hasEOL ? '\n' : ' ')).join('').slice(0, 30000);
+    contexts.push({ id: `page-${n}`, label: `PDF 第 ${n} 页`, text, image: canvas.toDataURL('image/png') });
+    canvas.width = canvas.height = 1;
+  }
+  const crop = await renderPdfExcerpt(id, data, anchor);
+  const selectionImage = crop.toDataURL('image/png'); crop.width = crop.height = 1;
+  return { contexts, selectionImage };
+}
+
+export async function readPdfContextPage(id: string, data: () => Promise<Uint8Array>, n: number, textOnly = false): Promise<{ id: string; label: string; text: string; image?: string }> {
+  const doc = await loadDocument(id, data);
+  if (n === 0 && textOnly) return { id: 'metadata', label: 'PDF metadata', text: JSON.stringify({ pageCount: doc.numPages }) };
+  if (n === 0) return { id: 'outline', label: 'PDF 目录', text: JSON.stringify(await resolveOutline(doc, await doc.getOutline?.())).slice(0, 100000) };
+  if (!Number.isInteger(n) || n < 1 || n > doc.numPages) throw new Error(`页码超出范围（1–${doc.numPages}）`);
+  const page = await doc.getPage(n);
+  if (textOnly) {
+    const text = (await page.getTextContent()).items.map(i => (i.str ?? '') + (i.hasEOL ? '\n' : ' ')).join('');
+    if (text.length > 100000) throw new Error('单页文本超过读取限制');
+    return { id: `page-${n}`, label: `PDF 第 ${n} / ${doc.numPages} 页`, text };
+  }
+  const natural = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: Math.min(1.6, 1600 / Math.max(natural.width, natural.height)) });
+  const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+  await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+  const text = (await page.getTextContent()).items.map(i => (i.str ?? '') + (i.hasEOL ? '\n' : ' ')).join('').slice(0, 30000);
+  const image = canvas.toDataURL('image/png'); canvas.width = canvas.height = 1;
+  return { id: `page-${n}`, label: `PDF 第 ${n} / ${doc.numPages} 页`, text, image };
 }
 
 function paintOverlays(
