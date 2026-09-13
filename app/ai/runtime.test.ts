@@ -2,13 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseRuntime, supportedVersion } from './runtime.ts';
 
-test('reject older and prerelease runtimes with incompatible protocol', () => {
+test('accept prerelease suffixes when the numeric version meets the protocol minimum', () => {
   assert.equal(supportedVersion('codex-cli 0.130.0-alpha.5'), null);
   assert.equal(supportedVersion('codex-cli 0.153.3'), null);
   assert.deepEqual(supportedVersion('codex-cli 0.153.4\n'), [0, 153, 4]);
+  assert.deepEqual(supportedVersion('codex-cli 0.154.0-alpha.6.2'), [0, 154, 0]);
+  assert.deepEqual(supportedVersion('codex-cli 0.154.0+desktop.1'), [0, 154, 0]);
 });
 test('select newest compatible binary even if PATH shim is older or missing', async () => {
-  const outputs: Record<string, string> = { shim: 'codex-cli 0.130.0-alpha.5', cached: 'codex-cli 0.153.4', latest: 'codex-cli 0.154.0' };
+  const outputs: Record<string, string> = { shim: 'codex-cli 0.130.0-alpha.5', cached: 'codex-cli 0.153.4', latest: 'codex-cli 0.154.0-alpha.6.2' };
   const selected = await chooseRuntime(['missing', 'shim', 'cached', 'latest'], async bin => { if (!(bin in outputs)) throw new Error('ENOENT'); return outputs[bin]!; });
   assert.equal(selected, 'latest');
 });

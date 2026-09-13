@@ -10,7 +10,7 @@ function compare(a: number[], b: number[]): number {
   return 0;
 }
 export function supportedVersion(output: string): number[] | null {
-  const match = output.trim().match(/^codex-cli (\d+)\.(\d+)\.(\d+)(?:\s|$)/);
+  const match = output.trim().match(/^codex-cli (\d+)\.(\d+)\.(\d+)(?:[-+][^\s]+)?(?:\s|$)/);
   if (!match) return null;
   const version = match.slice(1, 4).map(Number);
   return compare(version, minimum) >= 0 ? version : null;
@@ -25,7 +25,7 @@ export async function chooseRuntime(candidates: string[], probe = inspect): Prom
   }));
   const compatible = results.filter((c): c is Candidate => c !== null);
   compatible.sort((a, b) => compare(b.version, a.version));
-  if (!compatible.length) throw new Error('未找到兼容的 Codex CLI（需要 0.153.4 或更新的正式版）。请更新 Codex，或用 INTRO_CODEX_BIN 指定 codex.exe。');
+  if (!compatible.length) throw new Error('未找到兼容的 Codex CLI（需要 0.153.4 或更新版本）。请更新 Codex，或用 INTRO_CODEX_BIN 指定 codex.exe。');
   return compatible[0]!.bin;
 }
 export function runtimeCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -50,7 +50,7 @@ export function runtimeCandidates(env: NodeJS.ProcessEnv = process.env): string[
 export async function resolveCodexRuntime(env: NodeJS.ProcessEnv = process.env): Promise<string> {
   if (env.INTRO_CODEX_BIN) {
     try { return await chooseRuntime([env.INTRO_CODEX_BIN]); }
-    catch { throw new Error('INTRO_CODEX_BIN 指定的程序不存在或版本不兼容。请指向 0.153.4 或更新正式版的 codex.exe。'); }
+    catch { throw new Error('INTRO_CODEX_BIN 指定的程序不存在或版本不兼容。请指向 0.153.4 或更新版本的 codex.exe。'); }
   }
   return chooseRuntime(runtimeCandidates(env));
 }
