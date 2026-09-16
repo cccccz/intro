@@ -8,5 +8,5 @@
     "types": ["node"]
   },
   "include": ["./**/*.ts"],
-  "exclude": ["./**/*.test.ts", "./electron/renderer/**", "./dist/**"]
+  "exclude": ["./**/*.test.ts", "./electron/renderer/**", "./electron/ui/**", "./dist/**"]
 }

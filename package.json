@@ -10,7 +10,12 @@
     "build:app": "tsc -p app/tsconfig.build.json && tsc -p app/electron/renderer/tsconfig.json && node app/electron/copy-static.mjs",
     "app": "npm run build:app && electron .",
     "codex:check": "npm run build:app && node app/ai/doctor.mjs",
-    "electron:dev": "npm run build:app && electron ."
+    "electron:dev": "npm run build:app && electron .",
+    "test:pdf-smoke": "npm run build:app && electron app/ai/pdf-smoke.cjs",
+    "test:ui": "npm run build:app && playwright test --project=electron",
+    "test:ui:visual": "playwright test --project=visual",
+    "test:ui:update-baselines": "node app/electron/ui/update-baselines.mjs",
+    "test:explore": "npm run build:app && playwright test --project=explore"
   },
   "dependencies": {
     "katex": "0.16.47",
@@ -18,6 +23,7 @@
     "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.1",
     "@types/node": "^22.13.14",
     "electron": "^37.2.6",
     "typescript": "^5.9.2"
