@@ -1,2 +1,13 @@
 node_modules/
 app/dist/
+
+# Optional window-test artifacts (never commit). Do not add a repo-wide *.png rule.
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+.ui-baselines/
+**/__screenshots__/
+app/electron/ui/**/*-snapshots/
+test-results/explore/
+**/explore-report/

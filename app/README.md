@@ -138,7 +138,17 @@ Rendered 选区可以直接置顶，公式扩展为完整 TeX。跨 Markdown 格
 npm test
 ```
 
-用 Node 内置 `node:test`，不经过 mockup 的 `tsc`，也不跑 Electron E2E。类型检查：`npm run typecheck:app`。
+用 Node 内置 `node:test`，不经过 mockup 的 `tsc`。这是默认套件，不含窗口。类型检查：`npm run typecheck:app`。
+
+可选（真实 Electron，不进 `npm test`，不是换版默认硬门）。Linux 无显示时需要 `xvfb-run` 或可用的 `DISPLAY`。只用临时库，不要指向正式 `paul`：
+
+```
+npm run test:ui
+npm run test:explore
+npm run test:pdf-smoke
+```
+
+`test:ui` 跑 `app/electron/ui` 的 S0 烟测，默认不含 visual。`test:explore` 会在 `test-results/explore/<run-id>/report.json` 写下有限点击与 pageerror（可用 `INTRO_EXPLORE_SEED`）。这些产物以及视觉基线不要进 Git。
 
 数学渲染同时支持美元符号定界符和 LaTeX 的反斜杠括号定界符；保留原文，不转换库文件。
 `n公式局部 side：Rendered 中选中数学项，右键 New side 即可；Source 精确选区仍支持。普通编辑会更新关联位置。删除整个来源或跨越挂接边界会提示未保存，请撤销后先解除挂接。重开时可用恢复未保存的编辑找回草稿。

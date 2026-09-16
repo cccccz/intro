@@ -10,6 +10,15 @@ npm test
 npm run app
 ```
 
+可选窗口套件用真实 Electron，不进入 `npm test`，也不是换版默认硬门：
+
+```
+npm run test:ui
+npm run test:explore
+```
+
+视觉基线、报告、explore 证据不要提交。正式库 `paul` 不要用于自动化。说明见 [`ENGINEERING.md`](ENGINEERING.md) 与 [`app/README.md`](app/README.md)。
+
 打开空文件夹即可建库：写正文 → 划选 → New side → 再划再挂。或 **Open PDF…** 附入本地 PDF，框选区域挂侧边（侧车 overlay，不写回 PDF）。PDF 列可缩放 / 跳页 / 大纲；分栏可拖；篇名是 YAML `title:` 显示名，文件名 `{id}` 不变。详见 [`app/README.md`](app/README.md)。
 
 
