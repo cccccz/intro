@@ -43,6 +43,7 @@ test.describe.serial("S0 window smoke (no library)", () => {
       throw new Error("Electron session missing");
     }
     const { window } = session;
+    await expect(window.locator("#lib-path")).toHaveText(/No library open/);
     const sidebarEmpty = window.locator("#sidebar-empty");
     await expect(sidebarEmpty).toHaveCount(1);
     await expect(sidebarEmpty).toHaveText(/Open a folder to start/);

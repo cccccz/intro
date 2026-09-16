@@ -89,8 +89,22 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+function isAppPath(candidate: string): boolean {
+  const resolved = path.resolve(candidate);
+  if (resolved === path.resolve(app.getAppPath())) {
+    return true;
+  }
+  if (resolved === path.join(here, "main.js")) {
+    return true;
+  }
+  return false;
+}
+
 function libraryFlag(): string | null {
-  const argv = process.argv.slice(app.isPackaged ? 1 : 2);
+  // Playwright/Chromium prepend --inspect=0 before the app path, so do not
+  // assume argv[2] is the first user argument. Never treat the package root
+  // as a library (that would open the repo during window tests).
+  const argv = process.argv.slice(1);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--library" && argv[i + 1]) {
       return path.resolve(argv[i + 1]);
@@ -99,8 +113,24 @@ function libraryFlag(): string | null {
       return path.resolve(argv[i].slice("--library=".length));
     }
   }
-  const bare = argv.find((arg) => !arg.startsWith("-") && fs.existsSync(arg));
-  return bare ? path.resolve(bare) : null;
+  for (const arg of argv) {
+    if (arg.startsWith("-") || !fs.existsSync(arg)) {
+      continue;
+    }
+    const resolved = path.resolve(arg);
+    if (isAppPath(resolved)) {
+      continue;
+    }
+    try {
+      if (!fs.statSync(resolved).isDirectory()) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    return resolved;
+  }
+  return null;
 }
 
 ipcMain.handle(IPC.openLibrary, async () => {
