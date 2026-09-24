@@ -12,8 +12,8 @@
     "typecheck:app": "tsc -p app/tsconfig.json && tsc -p app/electron/renderer/tsconfig.json --noEmit",
     "build:app": "tsc -p app/tsconfig.build.json && tsc -p app/electron/renderer/tsconfig.json && node app/electron/copy-static.mjs",
     "app": "npm run build:app && electron .",
-    "codex:check": "npm run build:app && node app/ai/doctor.mjs",
-    "electron:dev": "npm run build:app && electron ."
+    "start": "npm run app",
+    "codex:check": "npm run build:app && node app/ai/doctor.mjs"
   },
   "dependencies": {
     "katex": "0.16.47",
