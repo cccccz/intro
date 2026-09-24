@@ -9,6 +9,8 @@ import { startHarness, type HarnessServer } from "./server.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const goldenPath = path.join(here, "goldens", "chain.aria.yml");
+// Git may check the golden out with CRLF on Windows.
+const lf = (text: string): string => text.replace(/\r\n/g, "\n");
 
 describe("reading navigation", { timeout: 180_000 }, () => {
   let root = "";
@@ -55,7 +57,7 @@ describe("reading navigation", { timeout: 180_000 }, () => {
         fs.writeFileSync(goldenPath, aria);
       }
       assert.equal(fs.existsSync(goldenPath), true, "missing golden; rerun with INTRO_UI_REFRESH=1");
-      assert.equal(aria.trim(), fs.readFileSync(goldenPath, "utf8").trim());
+      assert.equal(lf(aria).trim(), lf(fs.readFileSync(goldenPath, "utf8")).trim());
       assert.deepEqual(opened.errors, []);
     } finally {
       await opened.close();

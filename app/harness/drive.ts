@@ -38,7 +38,7 @@ export const defaultTour: DriveStep[] = [
 ];
 
 export async function openReadingPage(url: string): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
-  const channel = process.env.INTRO_BROWSER_CHANNEL || "chrome";
+  const channel = process.env.INTRO_BROWSER_CHANNEL || "msedge";
   const browser = await chromium.launch({
     headless: true,
     channel,
