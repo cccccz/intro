@@ -13,6 +13,7 @@ export const COLUMN_PDF_DEFAULT = 720;
 
 export type ChromeLayout = {
   sidebarWidth: number;
+  sidebarHidden: boolean;
   columnWidths: Record<string, number>;
 };
 
@@ -56,7 +57,7 @@ export function columnSize(
 }
 
 export function emptyLayout(): ChromeLayout {
-  return { sidebarWidth: SIDEBAR_DEFAULT, columnWidths: {} };
+  return { sidebarWidth: SIDEBAR_DEFAULT, sidebarHidden: false, columnWidths: {} };
 }
 
 export function parseChromeLayout(raw: unknown): ChromeLayout {
@@ -75,6 +76,7 @@ export function parseChromeLayout(raw: unknown): ChromeLayout {
   }
   return {
     sidebarWidth: clampSidebarWidth(typeof obj.sidebarWidth === "number" ? obj.sidebarWidth : SIDEBAR_DEFAULT),
+    sidebarHidden: obj.sidebarHidden === true,
     columnWidths: widths,
   };
 }
@@ -94,6 +96,7 @@ export function loadChromeLayout(storage: Pick<Storage, "getItem">): ChromeLayou
 export function saveChromeLayout(storage: Pick<Storage, "setItem">, layout: ChromeLayout): void {
   const next: ChromeLayout = {
     sidebarWidth: clampSidebarWidth(layout.sidebarWidth),
+    sidebarHidden: layout.sidebarHidden === true,
     columnWidths: Object.fromEntries(
       Object.entries(layout.columnWidths).map(([key, value]) => [key, clampColumnWidth(value)]),
     ),

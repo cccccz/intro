@@ -62,13 +62,16 @@ describe("chrome layout", () => {
     };
     saveChromeLayout(storage, {
       sidebarWidth: 12,
+      sidebarHidden: true,
       columnWidths: { "0": 500, "1": 80, bad: Number.NaN as unknown as number },
     });
     assert.equal(memory.has(LAYOUT_STORAGE_KEY), true);
     const loaded = loadChromeLayout(storage);
     assert.equal(loaded.sidebarWidth, SIDEBAR_MIN);
+    assert.equal(loaded.sidebarHidden, true);
     assert.equal(loaded.columnWidths["0"], 500);
     assert.equal(loaded.columnWidths["1"], COLUMN_MIN);
+    assert.equal(parseChromeLayout({ sidebarWidth: 220 }).sidebarHidden, false);
     assert.deepEqual(parseChromeLayout(null), emptyLayout());
     assert.deepEqual(loadChromeLayout({ getItem: () => "not-json" }), emptyLayout());
   });

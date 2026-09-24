@@ -11,6 +11,7 @@
 <body>
   <header>
     <strong>intro</strong>
+    <button type="button" id="btn-show-pieces" hidden>Pieces</button>
     <span id="lib-path" class="muted">No library open</span>
     <button type="button" id="btn-open">Open library</button>
     <button type="button" id="btn-new-piece" disabled>New piece</button>
@@ -19,7 +20,10 @@
   </header>
   <div id="workspace">
     <aside id="sidebar">
-      <h2>Pieces</h2>
+      <div class="sidebar-head">
+        <h2>Pieces</h2>
+        <button type="button" id="btn-hide-pieces">隐藏</button>
+      </div>
       <ul id="piece-list"></ul>
       <p id="sidebar-empty" class="muted">Open a folder to start. An empty folder is a new library.</p>
     </aside>

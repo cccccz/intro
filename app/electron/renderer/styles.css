@@ -146,12 +146,25 @@ body.is-col-resizing .pdf-overlay {
   pointer-events: none;
 }
 
-#sidebar h2 {
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   margin: 0 0 8px;
+}
+
+.sidebar-head h2 {
+  margin: 0;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
+}
+
+.sidebar-head button {
+  padding: 1px 6px;
+  font-size: 12px;
 }
 
 #piece-list {
@@ -272,21 +285,31 @@ body.is-col-resizing .pdf-overlay {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  padding: 6px 10px;
+  padding: 2px 8px;
   border-bottom: 1px solid var(--line);
 }
 
 .column-head .head-titles {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 }
 
 .column-head .piece-title {
-  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.column-head .head-titles .id {
+  flex: 0 1 16em;
+  min-width: 0;
+  font-size: 10px;
 }
 
 .column-head .id,
@@ -325,6 +348,7 @@ body.is-col-resizing .pdf-overlay {
 
 .card-hd {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 4px;
@@ -332,7 +356,7 @@ body.is-col-resizing .pdf-overlay {
 }
 
 .card-hd .head-titles {
-  flex: 1;
+  flex: 1 1 8em;
   min-width: 0;
 }
 
@@ -355,6 +379,8 @@ body.is-col-resizing .pdf-overlay {
 .card-hd button {
   padding: 2px 6px;
   font-size: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .card-hd .side-pin {

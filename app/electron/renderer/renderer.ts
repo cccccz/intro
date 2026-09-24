@@ -242,6 +242,8 @@ const el = {
   open: document.getElementById("btn-open") as HTMLButtonElement,
   newPiece: document.getElementById("btn-new-piece") as HTMLButtonElement,
   openPdf: document.getElementById("btn-open-pdf") as HTMLButtonElement,
+  showPieces: document.getElementById("btn-show-pieces") as HTMLButtonElement,
+  hidePieces: document.getElementById("btn-hide-pieces") as HTMLButtonElement,
   sidebar: document.getElementById("sidebar") as HTMLElement,
   splitSidebar: document.getElementById("split-sidebar") as HTMLElement,
   list: document.getElementById("piece-list") as HTMLUListElement,
@@ -304,6 +306,10 @@ function showColumnWindow(start: number): void {
   const nav = document.getElementById("column-nav")!;
   nav.replaceChildren();
   if (!state.nodes.length) return;
+  if (hi === 0) {
+    scheduleChrome();
+    return;
+  }
   const button = (label: string, target: number, disabled = false): void => {
     const btn = document.createElement("button");
     btn.textContent = label;
@@ -440,6 +446,15 @@ function persistLayout(): void {
 function applySidebarWidth(width: number): void {
   chromeLayout.sidebarWidth = clampSidebarWidth(width);
   el.sidebar.style.width = `${chromeLayout.sidebarWidth}px`;
+  persistLayout();
+  scheduleChrome();
+}
+
+function applySidebarHidden(hidden: boolean): void {
+  chromeLayout.sidebarHidden = hidden;
+  el.sidebar.hidden = hidden;
+  el.splitSidebar.hidden = hidden;
+  el.showPieces.hidden = !hidden;
   persistLayout();
   scheduleChrome();
 }
@@ -2470,7 +2485,14 @@ bindVSplitter(el.splitSidebar, {
   setWidth: applySidebarWidth,
   clamp: clampSidebarWidth,
 });
+el.hidePieces.addEventListener("click", () => {
+  applySidebarHidden(true);
+});
+el.showPieces.addEventListener("click", () => {
+  applySidebarHidden(false);
+});
 applySidebarWidth(chromeLayout.sidebarWidth);
+applySidebarHidden(chromeLayout.sidebarHidden);
 
 renderSidebar();
 renderColumns();
