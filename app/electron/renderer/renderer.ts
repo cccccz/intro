@@ -38,9 +38,9 @@ import {
   readPdfContextPage,
   type PdfAnchor,
   type OverlayRivet,
-  type PdfOutlineEntry,
   type PdfViewHandle,
 } from "./pdf-view.ts";
+import { mountOutlineView, type OutlineView } from "./pdf-outline-view.ts";
 import { katexMath, renderHtml } from "./render.ts";
 import { batchTo, inputChange, type EditBatch, type InputChange } from "./input-edits.ts";
 import { paintMathAnchors, paintMathRegions } from "./math-anchors.ts";
@@ -280,6 +280,8 @@ function saveSource(id: string, clean: string): Promise<Ok<{ piece: PieceDto }> 
 }
 
 const pdfViews = new Map<string, PdfViewHandle>();
+/** Unfolded outline entries per [library, PDF], so re-rendering a column keeps them. */
+const outlineFolds = new Map<string, Set<string>>();
 const chromeLayout: ChromeLayout = loadChromeLayout(localStorage);
 let hotId: string | null = null;
 let wireFrame = 0;
@@ -1473,11 +1475,15 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   outlineBtn.type = "button";
   outlineBtn.className = "pdf-outline-btn";
   outlineBtn.textContent = "Outline";
+  outlineBtn.disabled = true;
   outlineBtn.setAttribute("aria-expanded", "false");
+  let outline: OutlineView | null = null;
   const setOutlineOpen = (on: boolean): void => {
+    if (!on && drawer.contains(document.activeElement)) outlineBtn.focus();
     drawer.hidden = !on;
     outlineBtn.classList.toggle("on", on);
     outlineBtn.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on) outline?.reveal();
   };
 
   const overlayCount = view?.overlayRivets.length ?? 0;
@@ -1609,34 +1615,6 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   document.addEventListener("pointerdown", onOutlinePointer);
   window.addEventListener("keydown", onOutlineKey);
 
-  const paintOutline = (items: PdfOutlineEntry[], parent: HTMLElement, goto: (page: number) => void): void => {
-    const ul = document.createElement("ul");
-    for (const item of items) {
-      const li = document.createElement("li");
-      if (item.page != null) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = item.title;
-        btn.title = `Page ${item.page}`;
-        const page = item.page;
-        btn.addEventListener("click", () => {
-          goto(page);
-        });
-        li.append(btn);
-      } else {
-        const span = document.createElement("span");
-        span.className = "muted";
-        span.textContent = item.title;
-        li.append(span);
-      }
-      if (item.children.length > 0) {
-        paintOutline(item.children, li, goto);
-      }
-      ul.append(li);
-    }
-    parent.append(ul);
-  };
-
   void (async () => {
     const result = await window.intro.readPdf(node.pieceId);
     if (!result.ok) {
@@ -1668,6 +1646,7 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
           pageInput.value = String(page);
         }
         pageOf.textContent = ` / ${numPages}`;
+        outline?.setPage(page);
       },
     });
     pdfViews.get(node.id)?.destroy();
@@ -1716,9 +1695,14 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     } else {
       outlineBtn.textContent = "Outline";
       outlineBtn.disabled = false;
-      paintOutline(items, drawer, (page) => {
-        handle.gotoPage(page);
+      const foldKey = JSON.stringify([state.root, node.pieceId]);
+      if (!outlineFolds.has(foldKey)) outlineFolds.set(foldKey, new Set());
+      outline = mountOutlineView(drawer, items, {
+        page: () => handle.currentPage(),
+        goto: (page) => handle.gotoPage(page),
+        expanded: outlineFolds.get(foldKey),
       });
+      if (!drawer.hidden) outline.reveal();
     }
     scheduleChrome();
   })();
