@@ -1,0 +1,52 @@
+- navigation "阅读层级":
+  - button "←"
+  - button "原文"
+  - button "d1"
+  - button "d2"
+  - button "d3"
+  - button "→" [disabled]
+- main:
+  - text: d1 1 side
+  - article:
+    - strong: 第一层
+    - text: ← 宿主
+    - button "Pin"
+    - button "AI…"
+    - button "Rename"
+    - button "Close"
+    - button "解除挂接"
+    - button "删除笔记"
+    - paragraph:
+      - mark: 继续往下看这段
+      - text: 。
+    - paragraph: 侧边自己的正文。
+    - separator "拖动共享边界调整上下笔记高度；双击恢复默认"
+  - separator "Resize column"
+  - text: d2 1 side
+  - article:
+    - strong: 第二层
+    - text: ← 第一层
+    - button "Pin"
+    - button "AI…"
+    - button "Rename"
+    - button "Close"
+    - button "解除挂接"
+    - button "删除笔记"
+    - paragraph:
+      - mark: 再下一层的句子
+      - text: 。
+    - paragraph: 第二层其余。
+    - separator "拖动共享边界调整上下笔记高度；双击恢复默认"
+  - separator "Resize column"
+  - text: d3 1 side
+  - article:
+    - strong: 第三层
+    - text: ← 第二层
+    - button "Pin"
+    - button "AI…"
+    - button "Rename"
+    - button "Close"
+    - button "解除挂接"
+    - button "删除笔记"
+    - paragraph: 链的末端。读者可以停在这里。
+    - separator "拖动共享边界调整上下笔记高度；双击恢复默认"
