@@ -25,29 +25,15 @@ body {
   background: var(--bg);
 }
 
-header, footer {
+footer {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
   background: var(--paper);
-  border-bottom: 1px solid var(--line);
-}
-
-footer {
-  border-bottom: 0;
   border-top: 1px solid var(--line);
   min-height: 32px;
-}
-
-header strong { color: var(--accent); }
-
-#lib-path {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .muted { color: var(--muted); }
@@ -191,11 +177,6 @@ body.is-col-resizing .pdf-overlay {
   margin-bottom: 0;
 }
 
-#piece-list .piece-drop {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-}
-
 #piece-list .piece-title {
   flex: 1 1 100%;
   font-weight: 650;
@@ -322,11 +303,6 @@ body.is-col-resizing .pdf-overlay {
   white-space: nowrap;
 }
 
-.column-head .depth {
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .col-stack {
   flex: 1;
   min-height: 0;
@@ -377,10 +353,10 @@ body.is-col-resizing .pdf-overlay {
 }
 
 .card-hd button {
-  padding: 2px 6px;
-  font-size: 12px;
   flex-shrink: 0;
   white-space: nowrap;
+  padding: 2px 6px;
+  font-size: 12px;
 }
 
 .card-hd .side-pin {
@@ -941,6 +917,14 @@ body.is-row-resizing { cursor: ns-resize !important; user-select: none; }
 
 .ctx-menu button:disabled {
   opacity: 0.45;
+}
+
+.ctx-menu button.danger:not(:disabled) {
+  color: var(--danger);
+}
+
+.ctx-menu button.danger:hover:not(:disabled) {
+  background: #fef2f2;
 }
 /* A generated answer stays outside document storage until its source is checked. */
 .ai-pending { position: fixed; right: 18px; top: 70px; bottom: 45px; width: min(460px, 85vw); z-index: 300; background: white; border: 1px solid #b6c9ef; box-shadow: 0 5px 24px #0002; padding: 18px; display: flex; flex-direction: column; gap: 8px; }

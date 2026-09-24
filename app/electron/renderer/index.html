@@ -9,15 +9,6 @@
   <link rel="stylesheet" href="./vendor/katex.min.css" />
 </head>
 <body>
-  <header>
-    <strong>intro</strong>
-    <button type="button" id="btn-show-pieces" hidden>Pieces</button>
-    <span id="lib-path" class="muted">No library open</span>
-    <button type="button" id="btn-open">Open library</button>
-    <button type="button" id="btn-new-piece" disabled>New piece</button>
-    <button type="button" id="btn-open-pdf" disabled>Open PDF…</button>
-    <button type="button" id="btn-codex">Codex 回答</button>
-  </header>
   <div id="workspace">
     <aside id="sidebar">
       <div class="sidebar-head">
@@ -25,7 +16,7 @@
         <button type="button" id="btn-hide-pieces">隐藏</button>
       </div>
       <ul id="piece-list"></ul>
-      <p id="sidebar-empty" class="muted">Open a folder to start. An empty folder is a new library.</p>
+      <p id="sidebar-empty" class="muted">File → Open library（Ctrl+O）打开一个文件夹。空文件夹就是新库。</p>
     </aside>
     <div class="splitter v-split" id="split-sidebar" role="separator" aria-orientation="vertical" aria-label="Resize pieces list" title="Drag to resize"></div>
     <div id="board">

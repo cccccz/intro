@@ -61,4 +61,9 @@ contextBridge.exposeInMainWorld("intro", {
     ipcRenderer.on("library:opened", listener);
     return () => ipcRenderer.removeListener("library:opened", listener);
   },
+  onMenuCommand: (cb) => {
+    const listener = (_event, command) => cb(command);
+    ipcRenderer.on("menu:command", listener);
+    return () => ipcRenderer.removeListener("menu:command", listener);
+  },
 });

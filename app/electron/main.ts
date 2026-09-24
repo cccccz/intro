@@ -1,6 +1,6 @@
 import { AiService } from "../ai/service.ts";
 import type { AiStart, AiContext } from "./renderer/ai-types.ts";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +63,47 @@ function libraryDto(lib: Library) {
   return { root: lib.root, pieces: lib.list() };
 }
 
+function sendMenuCommand(command: string): void {
+  win?.webContents.send("menu:command", command);
+}
+
+function buildMenu(): void {
+  const hasLibrary = library !== null;
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: "File",
+      submenu: [
+        { label: "Open library…", accelerator: "CmdOrCtrl+O", click: () => sendMenuCommand("open-library") },
+        { label: "New piece", accelerator: "CmdOrCtrl+N", enabled: hasLibrary, click: () => sendMenuCommand("new-piece") },
+        { label: "Open PDF…", enabled: hasLibrary, click: () => sendMenuCommand("open-pdf") },
+        { type: "separator" },
+        { label: library ? library.root : "No library open", enabled: false },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        { label: "Pieces 显示/隐藏", accelerator: "CmdOrCtrl+B", click: () => sendMenuCommand("toggle-pieces") },
+        { label: "Codex 回答", click: () => sendMenuCommand("codex-answers") },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
@@ -113,6 +154,7 @@ ipcMain.handle(IPC.openLibrary, async () => {
       return { ok: false, error: "canceled" };
     }
     library = new Library(picked.filePaths[0]);
+    buildMenu();
     return { ok: true, library: libraryDto(library) };
   } catch (err) {
     return fail(err);
@@ -122,6 +164,7 @@ ipcMain.handle(IPC.openLibrary, async () => {
 ipcMain.handle(IPC.openLibraryPath, async (_e, root: string) => {
   try {
     library = new Library(root);
+    buildMenu();
     return { ok: true, library: libraryDto(library) };
   } catch (err) {
     return fail(err);
@@ -290,6 +333,9 @@ app.whenReady().then(() => {
   const initial = libraryFlag();
   if (initial) {
     library = new Library(initial);
+  }
+  buildMenu();
+  if (library) {
     win.webContents.once("did-finish-load", () => {
       win?.webContents.send("library:opened", libraryDto(library!));
     });

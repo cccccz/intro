@@ -58,6 +58,7 @@ window.intro = {
       if (index >= 0) listeners.splice(index, 1);
     };
   },
+  onMenuCommand: () => () => {},
 };
 
 void fetch("/api/library")

@@ -209,6 +209,7 @@ declare global {
   interface Window {
     intro: IntroApi & {
       onLibraryOpened: (cb: (library: LibraryDto) => void) => () => void;
+      onMenuCommand: (cb: (command: string) => void) => () => void;
     };
   }
 }
@@ -238,11 +239,6 @@ const state: State = {
 };
 
 const el = {
-  libPath: document.getElementById("lib-path") as HTMLElement,
-  open: document.getElementById("btn-open") as HTMLButtonElement,
-  newPiece: document.getElementById("btn-new-piece") as HTMLButtonElement,
-  openPdf: document.getElementById("btn-open-pdf") as HTMLButtonElement,
-  showPieces: document.getElementById("btn-show-pieces") as HTMLButtonElement,
   hidePieces: document.getElementById("btn-hide-pieces") as HTMLButtonElement,
   sidebar: document.getElementById("sidebar") as HTMLElement,
   splitSidebar: document.getElementById("split-sidebar") as HTMLElement,
@@ -319,7 +315,7 @@ function showColumnWindow(start: number): void {
   };
   button("←", columnStart - 1, columnStart === 0);
   for (let depth = 0; depth <= hi; depth++) {
-    button(depth === 0 ? "原文" : `d${depth}`, Math.max(0, depth - 2));
+    button(depth === 0 ? "原文" : `d${depth} · ${nodesAtDepth(state.nodes, depth).length}`, Math.max(0, depth - 2));
     nav.lastElementChild?.setAttribute("aria-current", String(depth >= columnStart && depth <= columnStart + 2));
   }
   button("→", columnStart + 1, columnStart + 2 >= hi);
@@ -454,7 +450,6 @@ function applySidebarHidden(hidden: boolean): void {
   chromeLayout.sidebarHidden = hidden;
   el.sidebar.hidden = hidden;
   el.splitSidebar.hidden = hidden;
-  el.showPieces.hidden = !hidden;
   persistLayout();
   scheduleChrome();
 }
@@ -548,6 +543,7 @@ function setStatus(text: string, danger = false): void {
 type CtxItem = {
   label: string;
   disabled?: boolean;
+  danger?: boolean;
   run: () => void;
 };
 
@@ -601,6 +597,7 @@ function showCtxMenu(ev: MouseEvent, items: readonly CtxItem[]): void {
     btn.setAttribute("role", "menuitem");
     btn.textContent = item.label;
     btn.disabled = Boolean(item.disabled);
+    btn.classList.toggle("danger", Boolean(item.danger));
     btn.addEventListener("click", () => {
       hideCtxMenu();
       item.run();
@@ -979,10 +976,8 @@ function applyLibrary(library: LibraryDto): void {
   state.sidePins = loadSidePins(localStorage, library.root);
   pinBoard.setLibrary(library.root);
   state.pieces = library.pieces;
-  el.libPath.textContent = library.root;
-  el.libPath.title = library.root;
-  el.newPiece.disabled = false;
-  el.openPdf.disabled = false;
+  const name = library.root.split(/[\\/]/).filter(Boolean).pop() ?? library.root;
+  document.title = `intro — ${name}`;
   renderSidebar();
 }
 
@@ -1065,8 +1060,8 @@ function renderSidebar(): void {
   el.list.replaceChildren();
   el.sidebarEmpty.hidden = state.pieces.length > 0 || !state.root;
   el.sidebarEmpty.textContent = state.root
-    ? "Empty library. Create a first piece."
-    : "Open a folder to start. An empty folder is a new library.";
+    ? "空库。右键此处或 Ctrl+N 新建第一篇笔记。"
+    : "File → Open library（Ctrl+O）打开一个文件夹。空文件夹就是新库。";
   const openIds = new Set(state.nodes.map((n) => n.pieceId));
   for (const piece of state.pieces) {
     const li = document.createElement("li");
@@ -1092,19 +1087,14 @@ function renderSidebar(): void {
     btn.addEventListener("click", () => {
       void openRootPiece(piece.id);
     });
+    btn.addEventListener("contextmenu", (ev) => {
+      ev.stopPropagation();
+      showCtxMenu(ev, [
+        { label: "打开", run: () => { void openRootPiece(piece.id); } },
+        { label: "删除笔记", danger: true, disabled: piece.medium !== "text", run: () => { void confirmDropSide(piece.id); } },
+      ]);
+    });
     li.append(btn);
-    if (piece.medium === "text") {
-      const drop = document.createElement("button");
-      drop.type = "button";
-      drop.className = "piece-drop danger";
-      drop.textContent = "删除笔记";
-      drop.title = "Delete this text piece and unreferenced children";
-      drop.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        void confirmDropSide(piece.id);
-      });
-      li.append(drop);
-    }
     el.list.append(li);
   }
 }
@@ -1134,8 +1124,8 @@ function renderColumns(): void {
     const hint = document.createElement("p");
     hint.className = "empty-main";
     hint.textContent = state.root
-      ? "Open a piece from the left, or create the first one."
-      : "Open a local library folder to write.";
+      ? "从左侧打开一篇，或 Ctrl+N 新建。"
+      : "File → Open library（Ctrl+O）打开本地库。";
     el.columns.append(hint);
     document.getElementById("column-nav")!.replaceChildren();
     drawWires();
@@ -1833,45 +1823,43 @@ function renderCard(node: OpenNode): HTMLElement {
     from.textContent = `← ${titleOf(parent.pieceId)}`;
     titles.append(from);
   }
-  const rename = document.createElement("button");
-  rename.type = "button";
-  rename.textContent = "Rename";
-  rename.title = "Set display name. File id stays the same.";
-  rename.addEventListener("click", () => {
-    void renamePiece(node.pieceId);
-  });
-  const close = document.createElement("button");
-  close.type = "button";
-  close.textContent = "Close";
-  close.addEventListener("click", () => {
-    state.nodes = closeNode(state.nodes, node.id);
-    renderSidebar();
-    renderColumns();
-    setStatus("Closed this side and its subtree. Rivets stay on disk.");
-  });
-  const drop = document.createElement("button");
-  drop.type = "button";
-  drop.className = "danger";
-  drop.textContent = "删除笔记";
-  drop.title = "Delete this note from the library and unreferenced children";
-  drop.addEventListener("click", () => {
-    void confirmDropSide(node.pieceId);
-  });
-  const detach = document.createElement("button");
-  detach.type = "button";
-  detach.textContent = "解除挂接";
-  detach.title = "仅移除这条连接，保留笔记及其他引用";
-  detach.onclick = async () => {
-    detach.disabled = true;
-    try { await detachNode(node); } finally { detach.disabled = false; }
-  };
+  let detaching = false;
+  const cardMenu = (ev: MouseEvent): void => showCtxMenu(ev, [
+    { label: "Rename", run: () => { void renamePiece(node.pieceId); } },
+    {
+      label: "Close",
+      run: () => {
+        state.nodes = closeNode(state.nodes, node.id);
+        renderSidebar();
+        renderColumns();
+        setStatus("Closed this side and its subtree. Rivets stay on disk.");
+      },
+    },
+    {
+      label: "解除挂接",
+      disabled: detaching,
+      run: async () => {
+        detaching = true;
+        try { await detachNode(node); } finally { detaching = false; }
+      },
+    },
+    { label: "删除笔记", danger: true, run: () => { void confirmDropSide(node.pieceId); } },
+  ]);
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "card-more";
+  more.textContent = "⋯";
+  more.title = "Rename / Close / 解除挂接 / 删除笔记";
+  more.setAttribute("aria-label", "更多操作");
+  more.addEventListener("click", cardMenu);
+  head.addEventListener("contextmenu", cardMenu);
   const aiButton = document.createElement('button'); aiButton.textContent = 'AI…';
   aiButton.onclick = ev => showCtxMenu(ev, [
     { label: '向这篇笔记提问…', run: () => askWholeNote(node.id, 'note') },
     { label: '改进这篇笔记…', run: () => askWholeNote(node.id, 'revise') },
   ]);
   aiButton.disabled = view?.medium !== 'text';
-  head.append(titles, pin, aiButton, rename, close, detach, drop);
+  head.append(titles, pin, aiButton, more);
   card.append(head);
   bindSurface(node, card);
   const heightKey = cardHeightKey(state.root ?? "", node.id);
@@ -1950,23 +1938,13 @@ function renderSideColumn(depth: number): HTMLElement {
   section.dataset.depth = String(depth);
   applyColumnWidth(section, depth, false);
 
-  const head = document.createElement("div");
-  head.className = "column-head";
-  const label = document.createElement("span");
-  label.className = "depth";
-  label.textContent = `d${depth}`;
-  const count = document.createElement("span");
-  count.className = "id";
-  count.textContent = cards.length === 1 ? "1 side" : `${cards.length} sides`;
-  head.append(label, count);
-
   const stack = document.createElement("div");
   stack.className = "col-stack";
   stack.addEventListener("scroll", scheduleChrome);
   for (const node of cards) {
     stack.append(renderCard(node));
   }
-  section.append(head, stack);
+  section.append(stack);
   return section;
 }
 
@@ -2151,7 +2129,7 @@ async function askCodex(parentId: string, selection: AiSelection, intent: 'note'
       state.views[parent.pieceId]?.clean !== selection.expected ||
       Array.from(el.columns.querySelectorAll<HTMLElement>('[data-piece-id]')).some(surface => surface.dataset.pieceId === parent.pieceId && surface.querySelector<HTMLTextAreaElement>('textarea.editor')?.value !== selection.expected)
     );
-    if (state.root !== root || changed) throw new Error('来源已变化或资料库已切换。回答已保留，可从顶部「Codex 回答」查看并复制。');
+    if (state.root !== root || changed) throw new Error('来源已变化或资料库已切换。回答已保留，可从菜单 View → Codex 回答 查看并复制。');
     if (ui.body.querySelector('.katex-error')) ui.message.textContent = '个别公式暂以源码显示，笔记仍会保存，可在 Source 修正。';
     const saved = await window.intro.aiCommit(job.id); if (!saved.ok) throw new Error(saved.error);
     if (state.root !== root) { ui.message.textContent = '回答已保存到原资料库。'; return; }
@@ -2230,8 +2208,6 @@ async function showCodexDrafts(): Promise<void> {
     ui.body.append(row);
   }
 }
-
-document.getElementById('btn-codex')?.addEventListener('click', () => { void showCodexDrafts(); });
 
 window.intro.onAiRead(request => {
   void (async () => {
@@ -2401,7 +2377,7 @@ async function openSideColumn(
   setStatus(already ? `Focused side ${result.piece.title}` : `Opened side ${result.piece.title}`);
 }
 
-el.open.addEventListener("click", async () => {
+async function openLibraryCommand(): Promise<void> {
   const result = await window.intro.openLibrary();
   if (!result.ok) {
     if (result.error !== "canceled") {
@@ -2416,9 +2392,16 @@ el.open.addEventListener("click", async () => {
   forgetAllPdfDocs();
   renderColumns();
   setStatus(`Library ${result.library.root}`);
-});
+}
 
-el.openPdf.addEventListener("click", async () => {
+function requireOpenLibrary(): boolean {
+  if (state.root) return true;
+  setStatus("先用 File → Open library 打开一个库。", true);
+  return false;
+}
+
+async function openPdfCommand(): Promise<void> {
+  if (!requireOpenLibrary()) return;
   const result = await window.intro.attachPdf();
   if (!result.ok) {
     if (result.error !== "canceled") {
@@ -2432,9 +2415,10 @@ el.openPdf.addEventListener("click", async () => {
   renderSidebar();
   renderColumns();
   setStatus(`Attached PDF host ${result.piece.title} (overlay sidecar; PDF not rewritten)`);
-});
+}
 
-el.newPiece.addEventListener("click", async () => {
+async function newPieceCommand(): Promise<void> {
+  if (!requireOpenLibrary()) return;
   const title = await askTitle("新建笔记");
   if (title === null) {
     return;
@@ -2456,6 +2440,14 @@ el.newPiece.addEventListener("click", async () => {
   const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
   editor?.focus();
   setStatus(`Created ${result.piece.title}`);
+}
+
+window.intro.onMenuCommand((command) => {
+  if (command === "open-library") void openLibraryCommand();
+  else if (command === "new-piece") void newPieceCommand();
+  else if (command === "open-pdf") void openPdfCommand();
+  else if (command === "toggle-pieces") applySidebarHidden(!chromeLayout.sidebarHidden);
+  else if (command === "codex-answers") void showCodexDrafts();
 });
 
 window.intro.onLibraryOpened((library) => {
@@ -2488,8 +2480,11 @@ bindVSplitter(el.splitSidebar, {
 el.hidePieces.addEventListener("click", () => {
   applySidebarHidden(true);
 });
-el.showPieces.addEventListener("click", () => {
-  applySidebarHidden(false);
+el.sidebar.addEventListener("contextmenu", (ev) => {
+  showCtxMenu(ev, [
+    { label: "New piece", disabled: !state.root, run: () => { void newPieceCommand(); } },
+    { label: "隐藏 Pieces", run: () => applySidebarHidden(true) },
+  ]);
 });
 applySidebarWidth(chromeLayout.sidebarWidth);
 applySidebarHidden(chromeLayout.sidebarHidden);
