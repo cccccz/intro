@@ -1,4 +1,4 @@
-# Ask Codex 开发版
+# Ask Codex
 
 ## 使用
 
@@ -13,7 +13,7 @@
 
 提示词定位为通用笔记助手，由用户问题决定内容与组织方式，不再强制数学推导。最终仍为标题、Markdown 正文和引用。网页资料使用可点击的 Markdown 链接，在系统浏览器打开。
 
-PDF 初始仍提供选区图像、本页和前后页，但工具可以读取关联 PDF 的任意有效页码及目录，不限于附近三页。给 side 提问时，初始提供当前笔记全文（超过十万字符时可继续分段读取）、直接来源片段和祖先／子 side 的关系目录；模型按需读取关联笔记、PDF 页面。已支持按需全文短语搜索和带页码的 Markdown 缓存；OCR 尚未接入，见 `OCR_NOTES.md`。
+PDF 初始仍提供选区图像、本页和前后页，但工具可以读取关联 PDF 的任意有效页码及目录，不限于附近三页。给 side 提问时，初始提供当前笔记全文（超过十万字符时可继续分段读取）、直接来源片段和祖先／子 side 的关系目录；模型按需读取关联笔记、PDF 页面。已支持按需全文短语搜索和带页码的 Markdown 缓存；OCR 尚未接入，见 [`docs/history/OCR_NOTES.md`](../../docs/history/OCR_NOTES.md)。
 
 side 卡片的 **AI…** 菜单包含「向这篇笔记提问」和「改进这篇笔记」。后者先显示原文／修改稿，点击应用才覆盖当前正文。保留原标题、ID 和未知元数据；已有子 side 的来源片段能唯一定位才保留挂接，否则拒绝覆盖并留下草稿。可撤销此次改进；笔记后来又被编辑时不会强行撤销覆盖。
 
@@ -37,17 +37,17 @@ App Server 复用现有 Codex 登录及宿主配置，通过进程参数关闭�
 - 真实 PDF 链路：PDF.js 提取文字／渲染页面和选区 → Codex 图片回答 → overlay side → 重开，PDF 字节不变。
 - 临时证据目录：`intro-ai-live-hRP1Ox`、`intro-ai-pdf-RkjFio`、`intro-ai-pdf-live-Sx6G2b`（系统 Temp 下）；未使用正式 paul 库。
 
-桌面交互验收由用户进行。本次只修改开发代码，没有替换已封存的桌面学习版。
+桌面交互验收由用户进行。这次没有改正式 library。
 
 新增真实验证：`freedom-smoke.mjs` 从账户发现 7 个模型，完成概念解释、真实联网查询、PDF 祖先来源回读、修改稿预览不写盘、应用和撤销，保留子 side，证据在系统 Temp 的 `intro-free-note-F9VYNo`。界面人工验收仍由用户进行。
 
 官方接口依据：[模型目录与动态工具](https://learn.chatgpt.com/docs/app-server)、[联网配置](https://learn.chatgpt.com/docs/config-file/config-reference)。
 
 
-2026-09-09 开发版：按需检索。上下文足够时直接回答；缺少定义、前文依据、交叉引用或有来源疑问时主动检索。新增 search_document，对关联全文做不区分大小写的短语搜索并返回页码／片段／分页结果；首次搜索 PDF 使用 PDF.js 逐页提取，生成应用配置目录 codex-answers/document-text 下以内容 SHA-256 命名的 .extracted.md 缓存，不写 library。read_document 支持 textOnly；原图读取保留。扫描空页明确标记，零命中不等于原书不存在。OCR 尚未接入，无数据库。正式桌面入口未替换。
+2026-09-09 按需检索。上下文足够时直接回答；缺少定义、前文依据、交叉引用或有来源疑问时主动检索。新增 search_document，对关联全文做不区分大小写的短语搜索并返回页码／片段／分页结果；首次搜索 PDF 使用 PDF.js 逐页提取，生成应用配置目录 codex-answers/document-text 下以内容 SHA-256 命名的 .extracted.md 缓存，不写 library。read_document 支持 textOnly；原图读取保留。扫描空页明确标记，零命中不等于原书不存在。OCR 尚未接入，无数据库。
 
 
-2026-09-09 回答校验修复（开发版）：当前选中 PDF 的 page-N 来源统一为 document-ID-page-N，并兼容模型返回的短别名；不会接受未读取页或其他 PDF 的同页号。解析／校验前将原始回答和实际读取 ID 写入原有回答日志，错误细分为 JSON、正文、内部标记和未知来源；失败原文在 Codex 回答草稿中只读展示供复制，不自动写 side。旧日志缺少 rawAnswer 仍可打开；此前丢失的失败原文无法补回。135 项测试、类型检查、构建通过，正式库与桌面入口未改动。
+2026-09-09 回答校验修复：当前选中 PDF 的 page-N 来源统一为 document-ID-page-N，并兼容模型返回的短别名；不会接受未读取页或其他 PDF 的同页号。解析／校验前将原始回答和实际读取 ID 写入原有回答日志，错误细分为 JSON、正文、内部标记和未知来源；失败原文在 Codex 回答草稿中只读展示供复制，不自动写 side。旧日志缺少 rawAnswer 仍可打开；此前丢失的失败原文无法补回。135 项测试、类型检查、构建通过，未改正式库。
 
 
-当前验证：137 项测试通过。草稿可编辑／保存／重新挂接，自动清理终端控制码，公式渲染错误不阻断新笔记保存。新电脑快速检查使用 `npm run codex:check`，详见根目录 `SETUP_WINDOWS.md`。
+当前验证：137 项测试通过。草稿可编辑／保存／重新挂接，自动清理终端控制码，公式渲染错误不阻断新笔记保存。新电脑快速检查使用 `npm run codex:check`，详见 [`docs/SETUP_WINDOWS.md`](../../docs/SETUP_WINDOWS.md)。

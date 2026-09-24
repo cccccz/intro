@@ -21,7 +21,7 @@ npm run app
 npm run codex:check
 ```
 
-此命令构建开发代码，并使用与 intro 相同的 CLI 定位器检查：
+此命令先构建，并使用与 intro 相同的 CLI 定位器检查：
 
 1. 找到兼容的可执行文件，显示实际路径。
 2. 完成 App Server stdio 握手。
@@ -63,7 +63,7 @@ Remove-Item Env:INTRO_CODEX_BIN -ErrorAction SilentlyContinue
 
 先打开一个新的空文件夹作为临时 library，创建一句测试正文，划词 → Ask Codex，选择账户提供的模型并问一个简单问题。此步骤会实际调用模型、使用额度。确认回答成为 side，关闭重开后仍在，再开始使用正式库。
 
-开发检查：
+再检查：
 
 ```powershell
 npm run typecheck:app
@@ -82,6 +82,6 @@ npm run build:app
 | 来源确实已修改 | 不强行覆盖；复制草稿到新笔记并手动挂接 |
 | 个别公式显示源码 | Source 中修正公式；不必重新生成整篇笔记 |
 
-开发版回答记录通常在 `%APPDATA%\intro\codex-answers\`，包含原始回答、具体错误与读取来源 ID；这是私人内容，不要直接提交 GitHub。较早版本丢失的失败原文无法恢复。全文搜索的 `.extracted.md` 位于其中 `document-text\`，可重建，无数据库；扫描页 OCR 尚未接入。
+回答记录通常在 `%APPDATA%\intro\codex-answers\`，包含原始回答、具体错误与读取来源 ID；这是私人内容，不要直接提交 GitHub。较早版本丢失的失败原文无法恢复。全文搜索的 `.extracted.md` 位于其中 `document-text\`，可重建，无数据库；扫描页 OCR 尚未接入。
 
-Git 只同步程序，不同步教材和笔记。换电脑须另行完整复制 library（包括隐藏／侧车文件），再用 Open library 打开；阅读位置和 Pin 属于应用配置，单独复制 library 不包含它们。正式库先备份，不要与开发测试共用。源码构建不会更新旧的独立学习版目录或桌面快捷方式。
+Git 只同步程序，不同步教材和笔记。换电脑须另行完整复制 library（包括隐藏／侧车文件），再用 Open library 打开；阅读位置和 Pin 属于应用配置，单独复制 library 不包含它们。正式库先备份，不要和测试共用。`Documents\intro-releases\` 里的旧目录是当时的打包快照，`npm start` 不会更新它们。
