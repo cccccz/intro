@@ -24,13 +24,15 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 测试
 
-现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂）、PDF 侧车锚（QuadPoints 归一、overlay 增删、挂侧边不改 PDF 字节）、显示名（`.intro.md` 文首 YAML `title:`，strip/persist 正文标记时保留 frontmatter；不建 `.meta.json`）、以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何；列内 rendered HTML：先铆点再 markdown-it 子集 + 消毒 + 铆点占位；PDF 可见页窗口：相交页 ± 2 页 overscan；页码 clamp；fit-width 倍率 zoom clamp；分栏宽度 persist clamp）。Source 不跑 markdown。不做 UI snapshot，也不做 Electron E2E。
+现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂）、PDF 侧车锚（QuadPoints 归一、overlay 增删、挂侧边不改 PDF 字节）、显示名（`.intro.md` 文首 YAML `title:`，strip/persist 正文标记时保留 frontmatter；不建 `.meta.json`）、以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何；列内 rendered HTML：先铆点再 markdown-it 子集 + 消毒 + 铆点占位；PDF 可见页窗口：相交页 ± 2 页 overscan；页码 clamp；fit-width 倍率 zoom clamp；分栏宽度 persist clamp）。Source 不跑 markdown。不做像素级 UI snapshot，也不做 Electron E2E。
+
+页面导航另有一条浏览器回路，做法参考 DeepSeek Harness：打开构建后的真实阅读页，而不是再写一套假页面；库只用临时合成目录，拒绝名为 `paul` 的正式库。`npm run test:ui` 用代码沿锚点打开侧边，断言第 22 条的三列窗口、同层共列，以及第 36、42 条的来源滚出视口与 Pin，并对照 `app/harness/goldens/chain.aria.yml` 里的无障碍树。树变了才算界面契约变了。更新对照文本用 `INTRO_UI_REFRESH=1`，不要手改。`npm run ui:drive` 走同一条页面并写出截图和无障碍树到 `app/harness/artifacts/latest`；截图给人或代理看，不作为通过条件。已有副本须显式 `--allow-library` 且自带 `--steps`，默认巡览不会点进一份现成库。Codex 不在这条回路里运行。
 
 写者壳的高亮与列间导线是视图像（结论第 39 条）：只读铆点 id 与已有标记算出的选区。文本几何由 textarea/HTML 提供；PDF 宿主由 PDF.js 把 overlay 的 page+rect 画成同一套 `[data-rivet]` 盒子。屏幕坐标仍不另存一份权威。PDF 的钉权威在 `{id}.intro.overlay.json`（结论第 40 条），不是 PDF 文件、也不是字符下标。导线只连「打开的铆点 ↔ 打开的侧边卡片」。同层多支叠在该层 panel（第 22 条）。源滚出视口则不画未 Pin 的侧边（第 36、42 条），不是合上；手动 Pin 保留卡片，不画悬空导线。文本标记权威与库 API 不变。侧边 Pin 用新的 `intro:side-pins:v1:` localStorage 偏好，按库及宿主篇/铆点隔离；旧库无记录即未 Pin，无文件迁移。
 
 PDF.js 列只对视口附近的页 raster：每页先用 `getViewport` 占位（正确总高度，不铺全文档 canvas）。`IntersectionObserver`（root = `.body-pdf`）给出相交页，再向两侧各扩 `PDF_OVERSCAN_PAGES = 2`；滚远的页拆掉 canvas/overlay，滚回再画（overlay 仍从 sidecar rivets 投影）。Resize 防抖 120ms，只重绘当前窗口，不无条件重绘全书。
 
-标记语法见 [`app/marks/SYNTAX.md`](app/marks/SYNTAX.md)。根目录跑 `npm test`（`node:test`，不动 mockup 的 `tsc`）。
+标记语法见 [`app/marks/SYNTAX.md`](app/marks/SYNTAX.md)。根目录跑 `npm test`（`node:test`，不动 mockup 的 `tsc`，不含浏览器）。改阅读页导航时再跑 `npm run test:ui`。
 
 ## 磁盘上的一篇
 
