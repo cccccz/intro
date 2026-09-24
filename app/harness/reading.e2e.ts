@@ -106,4 +106,72 @@ describe("reading navigation", { timeout: 180_000 }, () => {
       await opened.close();
     }
   });
+
+  it("opens the PDF outline at the section being read, filters it, and jumps", async () => {
+    const opened = await openReadingPage(harness.url);
+    const page = opened.page;
+    const host = page.locator('.column[data-depth="0"]');
+    const pageInput = host.locator(".pdf-page-jump input");
+    const outlineBtn = host.locator(".pdf-outline-btn");
+    const tree = host.getByRole("tree", { name: "目录" });
+    const rows = (): Promise<string[]> => tree.locator(".outline-title").allTextContents();
+    const currentRow = tree.locator('[aria-current="location"] .outline-title');
+    // The page box keeps what was typed while focused, so read the scroll position instead.
+    const waitPage = (n: number): Promise<unknown> => page.waitForFunction((want) => {
+      const pane = document.querySelector(".body-pdf");
+      const sheet = pane?.querySelector(`.pdf-page[data-page="${want}"]`);
+      if (!pane || !sheet) return false;
+      const top = pane.getBoundingClientRect().top + 40;
+      const box = sheet.getBoundingClientRect();
+      return box.top <= top && box.bottom > top;
+    }, n);
+    try {
+      await page.locator("button.piece-open", { hasText: "outline-book" }).click();
+      await page.waitForFunction(() => {
+        const btn = document.querySelector<HTMLButtonElement>(".pdf-outline-btn");
+        return btn?.textContent === "Outline" && !btn.disabled;
+      });
+      await pageInput.fill("5");
+      await pageInput.press("Enter");
+      await waitPage(5);
+
+      await outlineBtn.click();
+      assert.deepEqual(await rows(), ["Part One", "Chapter 1", "1.1 Intro", "1.2 Returns", "Chapter 2", "Part Two", "Index"]);
+      assert.equal(await currentRow.textContent(), "1.2 Returns");
+      assert.equal(await page.evaluate(() => document.activeElement?.querySelector(".outline-title")?.textContent), "1.2 Returns");
+      assert.deepEqual(await tree.locator(".outline-page").allTextContents(), ["1", "2", "2", "4", "6", "8", ""]);
+
+      await tree.locator(".outline-item", { hasText: "Part Two" }).locator(".outline-twisty").click();
+      assert.deepEqual((await rows()).slice(-3), ["Part Two", "Chapter 3", "Index"]);
+
+      const filter = host.getByRole("searchbox", { name: "筛选目录" });
+      await filter.fill("CORREL");
+      assert.deepEqual(await rows(), ["Part Two", "Chapter 3", "3.1 Correlation"]);
+      assert.equal(await tree.locator("mark").textContent(), "Correl");
+      await filter.press("Enter");
+      await waitPage(10);
+      await page.waitForFunction(() => document.querySelector('[aria-current="location"] .outline-title')?.textContent === "3.1 Correlation");
+
+      await filter.press("Escape");
+      assert.equal(await filter.inputValue(), "");
+      assert.equal(await host.locator(".pdf-outline-drawer").first().isVisible(), true);
+      await page.keyboard.press("Escape");
+      assert.equal(await host.locator(".pdf-outline-drawer").first().isVisible(), false);
+      assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("pdf-outline-btn")), true);
+
+      await outlineBtn.click();
+      assert.equal(await currentRow.textContent(), "3.1 Correlation");
+      await page.keyboard.press("ArrowLeft");
+      await page.keyboard.press("ArrowLeft");
+      assert.equal(await page.evaluate(() => document.activeElement?.querySelector(".outline-title")?.textContent), "Chapter 3");
+      assert.deepEqual(await rows(), ["Part One", "Chapter 1", "1.1 Intro", "1.2 Returns", "Chapter 2", "Part Two", "Chapter 3", "Index"]);
+      assert.equal(await tree.locator('[aria-current="true"] .outline-title').textContent(), "Chapter 3");
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("Enter");
+      await waitPage(8);
+      assert.deepEqual(opened.errors, []);
+    } finally {
+      await opened.close();
+    }
+  });
 });
