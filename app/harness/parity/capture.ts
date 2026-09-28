@@ -46,7 +46,7 @@ export async function captureSide(opts: CaptureOptions): Promise<{ failed: strin
   const browser = await chromium.launch({
     headless: true,
     channel: opts.channel,
-    args: ["--no-sandbox", "--disable-dev-shm-usage", "--font-render-hinting=none", "--disable-lcd-text", "--force-color-profile=srgb"],
+    args: ["--no-sandbox", "--disable-dev-shm-usage", "--font-render-hinting=none", "--disable-lcd-text", "--force-color-profile=srgb", "--disable-gpu", "--disable-partial-raster", "--disable-skia-runtime-opts"],
   });
   const failed: string[] = [];
   try {
