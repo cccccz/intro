@@ -1,6 +1,6 @@
 /** Shapes match `app/pdf/overlay.ts`. Duplicated: renderer build cannot import that tree. */
 
-import { clampPage, clampZoom, readingOffset, readingScrollTop, ZOOM_FIT } from "./pdf-nav.ts";
+import { clampPage, clampZoom, fitReferenceWidth, fitSamplePages, readingOffset, readingScrollTop, ZOOM_FIT } from "./pdf-nav.ts";
 import { loadReading, saveReading } from "./pdf-reading.ts";
 import {
   PDF_OVERSCAN_PAGES,
@@ -395,11 +395,13 @@ export async function mountPdfView(opts: {
     saveReading(localStorage, opts.readingStorageKey, lastReading);
   };
 
-  const scaleFor = async (pageNo: number): Promise<number> => {
-    const page = await doc.getPage(pageNo);
-    const base = page.getViewport({ scale: 1 });
+  let referenceWidth: Promise<number> | null = null;
+  const fitScale = async (): Promise<number> => {
+    referenceWidth ??= Promise.all(fitSamplePages(doc.numPages).map((n) => doc.getPage(n)))
+      .then((sample) => fitReferenceWidth(sample.map((page) => page.getViewport({ scale: 1 }).width)));
+    const base = await referenceWidth;
     const width = Math.max(240, root.clientWidth - 16);
-    return (width / base.width) * zoom;
+    return (width / base) * zoom;
   };
 
   const readCurrentPage = (): number => {
@@ -691,7 +693,7 @@ export async function mountPdfView(opts: {
       return;
     }
     const gen = ++layoutGen;
-    const scale = await scaleFor(1);
+    const scale = await fitScale();
     if (dead || gen !== layoutGen) {
       return;
     }

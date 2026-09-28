@@ -43,6 +43,32 @@ export function formatZoom(zoom: number): string {
   return `${Math.round(z * 100)}%`;
 }
 
+/** Evenly spread page numbers used to estimate the body page width. */
+export function fitSamplePages(numPages: number, count = 25): number[] {
+  if (!Number.isFinite(numPages) || numPages < 1) {
+    return [1];
+  }
+  const n = Math.min(Math.floor(numPages), count);
+  if (n === 1) {
+    return [1];
+  }
+  const out = new Set<number>();
+  for (let i = 0; i < n; i++) {
+    out.add(1 + Math.round((i * (numPages - 1)) / (n - 1)));
+  }
+  return [...out];
+}
+
+/** Median width, so a narrow cover or a wide fold-out does not set the fit for every page. */
+export function fitReferenceWidth(widths: number[]): number {
+  const valid = widths.filter((w) => Number.isFinite(w) && w > 0).sort((a, b) => a - b);
+  if (!valid.length) {
+    return 612;
+  }
+  const mid = valid.length >> 1;
+  return valid.length % 2 ? valid[mid]! : (valid[mid - 1]! + valid[mid]!) / 2;
+}
+
 export function clampPage(page: number, numPages: number): number {
   if (!Number.isFinite(numPages) || numPages < 1) {
     return 1;

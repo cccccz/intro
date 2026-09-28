@@ -6,6 +6,8 @@ import {
   ZOOM_MIN,
   clampPage,
   clampZoom,
+  fitReferenceWidth,
+  fitSamplePages,
   formatZoom,
   parsePageInput,
   zoomIn,
@@ -90,6 +92,24 @@ describe("clampPage", () => {
     assert.equal(parsePageInput("", 20), 1);
     assert.equal(parsePageInput("nope", 20), 1);
     assert.equal(parsePageInput("999", 8), 8);
+  });
+});
+
+describe("fit-width reference", () => {
+  it("samples across the whole document", () => {
+    assert.deepEqual(fitSamplePages(1), [1]);
+    assert.deepEqual(fitSamplePages(3), [1, 2, 3]);
+    const many = fitSamplePages(1401);
+    assert.equal(many.length, 25);
+    assert.equal(many[0], 1);
+    assert.equal(many.at(-1), 1401);
+  });
+
+  it("follows body pages rather than a narrow cover", () => {
+    const widths = [432, 288, ...Array.from({ length: 23 }, () => 600)];
+    assert.equal(fitReferenceWidth(widths), 600);
+    assert.equal(fitReferenceWidth([500, 700]), 600);
+    assert.equal(fitReferenceWidth([]), 612);
   });
 });
 
