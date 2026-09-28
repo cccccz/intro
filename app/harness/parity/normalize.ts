@@ -3,8 +3,11 @@
  * same behaviour. Parity captures name them by first appearance instead, so equal behaviour gives equal text.
  */
 
-const ULID = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
-const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+/** Not inside a longer word, but a JSON escape such as `\n` right before the id still counts as a boundary. */
+const BEFORE = String.raw`(?:(?<![0-9A-Za-z])|(?<=\\[nrtbf]))`;
+const AFTER = String.raw`(?![0-9A-Za-z])`;
+const ULID = new RegExp(`${BEFORE}[0-9A-HJKMNP-TV-Z]{26}${AFTER}`, "g");
+const UUID = new RegExp(`${BEFORE}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}${AFTER}`, "gi");
 /** Same cut as shortId() in the renderer and frontmatter: untitled pieces show the first 8 characters. */
 const SHORT = 8;
 
@@ -46,7 +49,7 @@ export class IdNormalizer {
     for (const [id, name] of this.names) {
       if (id.length !== 26) continue;
       const short = id.slice(0, SHORT).toUpperCase();
-      out = out.replace(new RegExp(`\\b${short}\\b`, "g"), `${name.slice(0, -1)}:short>`);
+      out = out.replace(new RegExp(`${BEFORE}${short}${AFTER}`, "g"), `${name.slice(0, -1)}:short>`);
     }
     return out;
   }

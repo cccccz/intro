@@ -43,6 +43,9 @@ async function contextOnSelection(ctx: ScenarioContext, editor: Locator, text: s
     if (start < 0) throw new Error(`text not in editor: ${wanted}`);
     area.focus();
     area.setSelectionRange(start, start + wanted.length);
+    // Switching to Source leaves the caret at the end; a reader would scroll back to the text first.
+    area.scrollTop = Math.max(0, Math.round(area.scrollHeight * start / Math.max(1, area.value.length) - area.clientHeight / 3));
+    area.dispatchEvent(new Event("scroll"));
     const box = area.getBoundingClientRect();
     area.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.x + 40, clientY: box.y + 40 }));
   }, text);
@@ -231,11 +234,30 @@ export const scenarios: Scenario[] = [
     },
   },
   {
+    name: "new-piece",
+    run: async (ctx) => {
+      const sidebar = await ctx.page.locator("#sidebar").boundingBox();
+      if (!sidebar) throw new Error("sidebar not laid out");
+      await ctx.page.mouse.click(sidebar.x + 60, sidebar.y + sidebar.height - 60, { button: "right" });
+      await ctx.quiet();
+      await ctx.checkpoint("sidebar-menu");
+      await menu(ctx, "New piece");
+      await ctx.page.locator("dialog.piece-picker input").fill("新的一篇");
+      await ctx.page.locator("dialog.piece-picker button[type=submit]").click();
+      await ctx.quiet();
+      await ctx.checkpoint("created");
+      await ctx.page.locator('.column[data-depth="0"] textarea.editor').focus();
+      await ctx.page.keyboard.type("# 标题\n\n第一段 **粗体**。");
+      await ctx.quiet();
+      await ctx.checkpoint("typed");
+    },
+  },
+  {
     name: "column-resize",
     run: async (ctx) => {
       await openPiece(ctx, "宿主");
       await clickMark(ctx, 0, ANCHOR_A);
-      const splitter = ctx.page.locator('.column[data-depth="1"] ~ .col-splitter, .col-splitter').last();
+      const splitter = ctx.page.locator("#columns > .splitter.v-split").first();
       const box = await splitter.boundingBox();
       if (box) {
         await ctx.page.mouse.move(box.x + box.width / 2, box.y + 200);

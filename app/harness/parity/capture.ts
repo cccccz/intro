@@ -85,16 +85,28 @@ async function captureScenario(
     timezoneId: "UTC",
     colorScheme: "light",
   });
+  context.setDefaultTimeout(10_000);
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
-  page.on("console", (msg) => { if (msg.type() === "error") errors.push(`console: ${msg.text()}`); });
+  page.on("console", (msg) => {
+    if (msg.type() === "error" && !msg.text().startsWith("Failed to load resource")) errors.push(`console: ${msg.text()}`);
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 400) errors.push(`http ${response.status()} ${new URL(response.url()).pathname}`);
+  });
   const traffic = trackApi(page);
   await page.addInitScript(() => {
     const w = window as unknown as { __parityLastMutation: number };
     w.__parityLastMutation = performance.now();
     new MutationObserver(() => { w.__parityLastMutation = performance.now(); })
       .observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    // Half-finished transitions make screenshots differ between identical builds.
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "*,*::before,*::after{transition:none!important;animation:none!important}";
+      document.head.append(style);
+    });
   });
 
   const checkpoints: RawCheckpoint[] = [];
