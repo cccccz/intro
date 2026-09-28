@@ -185,15 +185,40 @@ body.is-col-resizing .pdf-overlay {
   white-space: nowrap;
 }
 
-#piece-list .piece-id {
+#piece-list .piece-meta {
   display: block;
   width: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#piece-list .piece-fold {
+  flex: 0 0 16px;
+  width: 16px;
+  padding: 4px 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+}
+#piece-list .piece-fold:hover { color: var(--accent); }
+#piece-list .piece-fold-spacer { flex: 0 0 16px; }
+#piece-list li[data-depth]:not([data-depth="0"]) { margin-bottom: 2px; }
+#piece-list li[data-depth]:not([data-depth="0"]) .piece-open { padding: 3px 8px; border-color: transparent; }
+#piece-list li[data-depth]:not([data-depth="0"]) .piece-open:hover { border-color: #bfdbfe; }
+#piece-list li[data-depth]:not([data-depth="0"]) .piece-title { font-weight: 550; }
+
+.piece-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  padding: 4px 6px;
+  font-size: 12px;
 }
 
 #piece-list button.on {
@@ -782,6 +807,70 @@ body.is-col-resizing .pdf-overlay {
 .card-resize.dragging { background: #93c5fd; }
 body.is-row-resizing { cursor: ns-resize !important; user-select: none; }
 .column.stack .card { height: 320px; min-height: 120px; }
+.column.stack .col-stack { display: flex; flex-direction: column; }
+/* Cards the user has not resized share whatever height the column has left. */
+.column.stack .card[data-auto-height] { flex: 1 0 320px; }
+
+.offscreen-hints {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+}
+.offscreen-hints button {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 6px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+}
+.offscreen-hints button:hover { color: var(--accent); border-color: #bfdbfe; background: #eff6ff; }
+.offscreen-hints button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offscreen-hints .arrow { flex-shrink: 0; }
+
+.backlinks {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.backlinks button { padding: 1px 6px; font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.body-rendered .page-ref { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
+
+.pdf-rivets-drawer .rivet {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.pdf-rivets-drawer .rivet .rivet-to {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdf-rivets-drawer .rivet .thumb {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 56px;
+  object-fit: contain;
+  object-position: left center;
+  border: 1px solid var(--line);
+  background: #fff;
+}
 .column.stack .card-body { min-height: 0; }
 .card-hd { flex-shrink: 0; }
 
@@ -796,7 +885,11 @@ body.is-row-resizing { cursor: ns-resize !important; user-select: none; }
 .piece-picker input { box-sizing: border-box; width: 100%; padding: 8px; }
 .piece-picker-list { margin: 12px 0; max-height: 50vh; overflow: auto; }
 .piece-picker-list button { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 10px; }
-.piece-picker-list span { display: block; margin-top: 5px; color: #71717a; white-space: pre-wrap; overflow-wrap: anywhere; }
+.piece-picker-list button > span { display: block; margin-top: 5px; color: #71717a; white-space: pre-wrap; overflow-wrap: anywhere; }
+.piece-picker-list button > .piece-picker-preview { white-space: normal; max-height: 6.5em; overflow: hidden; font-size: 13px; }
+.piece-picker-list .piece-picker-preview > :first-child { margin-top: 0; }
+.piece-picker-list .piece-picker-preview > :last-child { margin-bottom: 0; }
+.piece-picker-list button > .piece-picker-hung { font-size: 12px; color: var(--accent); }
 
 .pdf-page {
   position: relative;

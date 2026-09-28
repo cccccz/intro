@@ -15,6 +15,7 @@
         <h2>Pieces</h2>
         <button type="button" id="btn-hide-pieces">隐藏</button>
       </div>
+      <input type="search" id="piece-filter" class="piece-filter" placeholder="筛选笔记" aria-label="筛选笔记" hidden />
       <ul id="piece-list"></ul>
       <p id="sidebar-empty" class="muted">File → Open library（Ctrl+O）打开一个文件夹。空文件夹就是新库。</p>
     </aside>
@@ -25,7 +26,7 @@
       <svg class="wires" id="wires" aria-hidden="true"></svg>
     </div>
   </div>
-  <footer id="status" class="muted">Open a library, create a first piece, write text, select a span, hang a side.</footer>
+  <footer id="status" class="muted">打开一个资料库，写下正文，划选一段，挂一篇侧注。</footer>
   <script src="./vendor/katex.min.js"></script>
   <script src="./vendor/markdown-it.min.js"></script>
   <script type="module" src="./renderer.js"></script>

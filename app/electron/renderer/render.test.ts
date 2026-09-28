@@ -5,6 +5,7 @@ import { add, flattenRivetSpecs, parse, strip } from "../../marks/index.ts";
 import {
   fallbackMath,
   hasMarkDelimiters,
+  labelHtml,
   markupMarkdown,
   renderHtml,
   sanitizeHtml,
@@ -64,6 +65,15 @@ describe("markupMarkdown", () => {
   it("fallbackMath escapes TeX", () => {
     assert.equal(fallbackMath("a<b", false), '<span class="tex">a&lt;b</span>');
     assert.equal(fallbackMath("x", true), '<div class="tex display">x</div>');
+  });
+});
+
+describe("labelHtml", () => {
+  it("renders inline math in a title and escapes the rest", () => {
+    const math = (tex: string, display: boolean) => `[${display ? "D" : "I"}:${tex}]`;
+    assert.equal(labelHtml("为什么 $C$ 满足 <b>", math), "为什么 [I:C] 满足 &lt;b&gt;");
+    assert.equal(labelHtml(String.raw`从 \(p_F\) 到 $V$`, math), "从 [I:p_F] 到 [I:V]");
+    assert.equal(labelHtml("**不是** Markdown，$ 单个美元", math), "**不是** Markdown，$ 单个美元");
   });
 });
 

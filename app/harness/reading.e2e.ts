@@ -101,6 +101,13 @@ describe("reading navigation", { timeout: 180_000 }, () => {
       await settle(page);
       assert.equal(await card.evaluate((el) => (el as HTMLElement).hidden), true);
       assert.equal(await page.locator('section.column[data-depth="1"]').evaluate((el) => (el as HTMLElement).hidden), false);
+      const hint = page.locator('section.column[data-depth="1"] .offscreen-hints button');
+      assert.equal(await hint.count(), 1);
+      assert.match((await hint.textContent()) ?? "", /^↑/);
+      await hint.click();
+      await settle(page);
+      assert.equal(await card.evaluate((el) => (el as HTMLElement).hidden), false);
+      assert.equal(await hint.count(), 0);
       assert.deepEqual(opened.errors, []);
     } finally {
       await opened.close();

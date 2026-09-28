@@ -1,9 +1,9 @@
 - navigation "阅读层级":
   - button "←"
-  - button "原文"
-  - button "d1 · 1"
-  - button "d2 · 1"
-  - button "d3 · 1"
+  - button "宿主"
+  - button "第一层"
+  - button "第二层"
+  - button "第三层"
   - button "→" [disabled]
 - main:
   - article:

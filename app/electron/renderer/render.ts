@@ -499,6 +499,19 @@ function renderMarkdown(src: string, math: MathRenderer): { html: string; math: 
 }
 
 /** True when text still has 做法 A delimiters. Markdown must not see these. */
+/** One-line label: inline `$…$` and `\(…\)` go through `math`; all other text is escaped, never Markdown. */
+export function labelHtml(text: string, math: MathRenderer = fallbackMath): string {
+  const re = /\$([^$\n]+?)\$|\\\((.+?)\\\)/g;
+  let out = "";
+  let cursor = 0;
+  for (const match of text.matchAll(re)) {
+    out += escapeHtml(text.slice(cursor, match.index));
+    out += math(match[1] ?? match[2] ?? "", false);
+    cursor = match.index + match[0].length;
+  }
+  return out + escapeHtml(text.slice(cursor));
+}
+
 export function hasMarkDelimiters(text: string): boolean {
   return /<<r(?:\s|\/)/.test(text) || /<<\/r\b/.test(text);
 }

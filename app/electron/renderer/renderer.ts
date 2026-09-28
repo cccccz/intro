@@ -19,6 +19,7 @@ import {
   clampColumnWidth,
   clampSidebarWidth,
   columnSize,
+  defaultColumnWidth,
   loadChromeLayout,
   saveChromeLayout,
   type ChromeLayout,
@@ -41,7 +42,8 @@ import {
   type PdfViewHandle,
 } from "./pdf-view.ts";
 import { mountOutlineView, type OutlineView } from "./pdf-outline-view.ts";
-import { katexMath, renderHtml } from "./render.ts";
+import { katexMath, labelHtml, renderHtml } from "./render.ts";
+import { filterRows, hangPath, pieceTree, type TreeLink, type TreeRow } from "./piece-tree.ts";
 import { batchTo, inputChange, type EditBatch, type InputChange } from "./input-edits.ts";
 import { paintMathAnchors, paintMathRegions } from "./math-anchors.ts";
 
@@ -76,6 +78,8 @@ type LibraryDto = {
   pieces: ListedPieceDto[];
 };
 
+type LinkDto = TreeLink;
+
 type Ok<T> = { ok: true } & T;
 type Err = { ok: false; error: string };
 
@@ -97,6 +101,7 @@ type IntroApi = {
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
   listPieces: () => Promise<Ok<{ pieces: LibraryDto["pieces"] }> | Err>;
+  listLinks: () => Promise<Ok<{ links: LinkDto[] }> | Err>;
   createPiece: (opts?: {
     id?: string;
     body?: string;
@@ -115,7 +120,7 @@ type IntroApi = {
     clean?: string;
     sideId?: string;
   }) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
-  attachPdf: () => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
+  attachPdf: () => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"]; existing: boolean; sourceInLibrary: boolean; sourcePath: string }> | Err>;
   readPdf: (id: string) => Promise<Ok<{ data: Uint8Array }> | Err>;
   hangPdfSide: (opts: {
     hostId: string;
@@ -227,6 +232,8 @@ type State = {
    */
   modes: Record<string, BodyMode>;
   sidePins: Set<string>;
+  /** Who hangs whom, rebuilt from marks and overlays by the main process. */
+  links: LinkDto[];
 };
 
 const state: State = {
@@ -236,6 +243,7 @@ const state: State = {
   views: {},
   modes: {},
   sidePins: new Set(),
+  links: [],
 };
 
 const el = {
@@ -243,6 +251,7 @@ const el = {
   sidebar: document.getElementById("sidebar") as HTMLElement,
   splitSidebar: document.getElementById("split-sidebar") as HTMLElement,
   list: document.getElementById("piece-list") as HTMLUListElement,
+  pieceFilter: document.getElementById("piece-filter") as HTMLInputElement,
   sidebarEmpty: document.getElementById("sidebar-empty") as HTMLElement,
   board: document.getElementById("board") as HTMLElement,
   columns: document.getElementById("columns") as HTMLElement,
@@ -297,7 +306,7 @@ function showColumnWindow(start: number): void {
     col.hidden = depth < columnStart || depth > columnStart + 2;
     col.style.minWidth = "0";
     col.style.width = "0";
-    col.style.flex = `${chromeLayout.columnWidths[String(depth)] ?? 360} 1 0px`;
+    col.style.flex = `${chromeLayout.columnWidths[String(depth)] ?? defaultColumnWidth(depth, col.classList.contains("pdf-host"))} 1 0px`;
   }
   el.columns.querySelectorAll(":scope > .splitter").forEach((split) => split.remove());
   insertColumnSplitters();
@@ -308,20 +317,40 @@ function showColumnWindow(start: number): void {
     scheduleChrome();
     return;
   }
-  const button = (label: string, target: number, disabled = false): void => {
+  const button = (label: string, target: number, disabled = false): HTMLButtonElement => {
     const btn = document.createElement("button");
     btn.textContent = label;
     btn.disabled = disabled;
     btn.onclick = () => showColumnWindow(target);
     nav.append(btn);
+    return btn;
   };
-  button("←", columnStart - 1, columnStart === 0);
+  button("←", columnStart - 1, columnStart === 0).title = "向前一层";
   for (let depth = 0; depth <= hi; depth++) {
-    button(depth === 0 ? "原文" : `d${depth} · ${nodesAtDepth(state.nodes, depth).length}`, Math.max(0, depth - 2));
-    nav.lastElementChild?.setAttribute("aria-current", String(depth >= columnStart && depth <= columnStart + 2));
+    const btn = button(depthLabel(depth), Math.max(0, depth - 2));
+    btn.dataset.depthLabel = String(depth);
+    btn.title = nodesAtDepth(state.nodes, depth).map((node) => titleOf(node.pieceId, excerptFor(node))).join("\n");
+    btn.setAttribute("aria-current", String(depth >= columnStart && depth <= columnStart + 2));
   }
-  button("→", columnStart + 1, columnStart + 2 >= hi);
+  button("→", columnStart + 1, columnStart + 2 >= hi).title = "向后一层";
   scheduleChrome();
+}
+
+const NAV_LABEL_MAX = 14;
+
+/** Breadcrumb text for one depth: the note's own title, or how many notes are open there. */
+function depthLabel(depth: number): string {
+  const nodes = nodesAtDepth(state.nodes, depth);
+  if (depth === 0) {
+    return nodes[0] ? clip(titleOf(nodes[0].pieceId), NAV_LABEL_MAX) : "原文";
+  }
+  if (nodes.length === 1) return clip(titleOf(nodes[0]!.pieceId, excerptFor(nodes[0]!)), NAV_LABEL_MAX);
+  return `${nodes.length} 篇`;
+}
+
+function clip(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max)}…`;
 }
 let pendingPdfPage: { nodeId: string; page: number } | null = null;
 let pendingPinAnchor: { pieceId: string; anchor: PdfAnchor } | null = null;
@@ -422,19 +451,29 @@ function titledOf(pieceId: string): boolean {
   return Boolean(state.views[pieceId]?.titled || state.pieces.find((p) => p.id === pieceId)?.titled);
 }
 
+/** Manual title, else the first written line, else the anchored excerpt. The id is never the label. */
 function titleOf(pieceId: string, excerpt?: string): string {
-  if (titledOf(pieceId)) {
-    return state.views[pieceId]?.title
-      ?? state.pieces.find((p) => p.id === pieceId)?.title
-      ?? shortId(pieceId);
+  const known = state.views[pieceId]?.title ?? state.pieces.find((p) => p.id === pieceId)?.title;
+  if (titledOf(pieceId) || (known && known !== shortId(pieceId))) {
+    return known ?? "未命名笔记";
   }
   const trimmed = excerpt?.replace(/\s+/g, " ").trim();
   if (trimmed && trimmed !== "(empty)") {
     return trimmed;
   }
-  return state.views[pieceId]?.title
-    ?? state.pieces.find((p) => p.id === pieceId)?.title
-    ?? shortId(pieceId);
+  return excerptOfLinkTo(pieceId) ?? "未命名笔记";
+}
+
+function excerptOfLinkTo(pieceId: string): string | undefined {
+  const link = state.links.find((entry) => entry.sideId === pieceId);
+  if (!link) return undefined;
+  if (link.excerpt) return link.excerpt;
+  return link.page ? `第 ${link.page} 页选区` : undefined;
+}
+
+/** Title with inline math rendered, for labels that are not editable text. */
+function paintLabel(target: HTMLElement, text: string): void {
+  target.innerHTML = labelHtml(text, katexMath);
 }
 
 function persistLayout(): void {
@@ -514,7 +553,7 @@ async function renamePiece(id: string): Promise<void> {
   state.pieces = result.pieces;
   renderSidebar();
   paintTitles();
-  setStatus(`Title: ${result.piece.title}`);
+  setStatus(`已改名为「${titleOf(id)}」`);
 }
 
 function paintTitles(): void {
@@ -525,16 +564,20 @@ function paintTitles(): void {
     }
     const open = state.nodes.find((n) => n.id === (node as HTMLElement).dataset.nodeId);
     const title = titleOf(pieceId, open ? excerptFor(open) : undefined);
-    node.querySelectorAll(".piece-title").forEach((label) => {
-      label.textContent = title;
+    node.querySelectorAll<HTMLElement>(".piece-title").forEach((label) => {
+      if (label.closest("[data-piece-id]") === node) paintLabel(label, title);
     });
   });
-  el.columns.querySelectorAll("[data-to]").forEach((node) => {
-    const to = (node as HTMLElement).dataset.to;
+  el.columns.querySelectorAll<HTMLElement>("[data-to]").forEach((node) => {
+    const to = node.dataset.to;
     if (to) {
-      node.textContent = `→ ${titleOf(to)}`;
+      paintLabel(node, `${node.dataset.page ? `p${node.dataset.page} ` : ""}→ ${titleOf(to)}`);
     }
   });
+  document.getElementById("column-nav")?.querySelectorAll<HTMLElement>("[data-depth-label]").forEach((btn) => {
+    btn.textContent = depthLabel(Number(btn.dataset.depthLabel));
+  });
+  paintBacklinks();
 }
 
 function setStatus(text: string, danger = false): void {
@@ -646,13 +689,28 @@ function promptExistingSide(excludeId: string, textOnly: boolean): Promise<strin
       const query = search.value.trim().toLocaleLowerCase();
       for (const piece of listed) {
         const preview = previews.get(piece.id) ?? (piece.medium === "pdf" ? "PDF" : "正在加载正文…");
-        if (!`${piece.title} ${preview}`.toLocaleLowerCase().includes(query)) continue;
+        const label = titleOf(piece.id);
+        const hung = state.links
+          .filter((link) => link.sideId === piece.id)
+          .map((link) => `${titleOf(link.hostId)}${link.page ? ` p${link.page}` : ""}`);
+        if (!`${label} ${preview} ${hung.join(" ")}`.toLocaleLowerCase().includes(query)) continue;
         const button = document.createElement("button");
         const title = document.createElement("strong");
-        title.textContent = piece.title;
+        paintLabel(title, label);
         const text = document.createElement("span");
-        text.textContent = preview.slice(0, 180) || "（空笔记）";
+        text.className = "piece-picker-preview";
+        if (previews.has(piece.id) && preview.trim()) {
+          text.innerHTML = renderHtml(preview.slice(0, 300), [], [], katexMath);
+        } else {
+          text.textContent = preview.trim() ? preview : "（空笔记）";
+        }
         button.append(title, text);
+        if (hung.length) {
+          const where = document.createElement("span");
+          where.className = "piece-picker-hung";
+          paintLabel(where, `已挂在：${hung.join("；")}`);
+          button.append(where);
+        }
         button.onclick = () => { selected = piece.id; dialog.close(); };
         list.append(button);
       }
@@ -686,13 +744,21 @@ function quoteOf(clean: string, start: number, end: number): string {
   return `${slice.slice(0, 24)}…`;
 }
 
+const THUMB_WIDTH = 240;
+
+/** Reading order on the page: by page, then top edge (PDF user space grows upward). */
+function overlayOrder(rivet: OverlayRivet): number {
+  const first = rivet.anchors[0];
+  return first ? first.page * 1e6 - (first.rect.y + first.rect.height) : Number.MAX_SAFE_INTEGER;
+}
+
 function overlayQuote(rivet: OverlayRivet): string {
   if (rivet.quote) {
     const slice = rivet.quote.replace(/\s+/g, " ").trim();
-    return slice.length <= 24 ? slice || "region" : `${slice.slice(0, 24)}…`;
+    return slice.length <= 24 ? slice || "选区" : `${slice.slice(0, 24)}…`;
   }
   const first = rivet.anchors[0];
-  return first ? `p${first.page} region` : "region";
+  return first ? `第 ${first.page} 页选区` : "选区";
 }
 
 function modeOf(nodeId: string): BodyMode {
@@ -752,6 +818,7 @@ function paintRendered(surface: HTMLElement): void {
   );
   mapRenderedBlocks(pane, editor.value);
   paintMathAnchors(pane);
+  linkPageRefs(pane, pieceId);
   pane.querySelectorAll("mark[data-rivet], [data-math-rivets]").forEach((mark) => {
     const rivetId = (mark as HTMLElement).dataset.rivet ?? (mark as HTMLElement).dataset.mathRivets?.split(" ")[0];
     if (!rivetId) {
@@ -869,11 +936,13 @@ function scheduleChrome(): void {
     }
     el.columns.querySelectorAll<HTMLElement>(".body-rendered").forEach(pane => paintMathRegions(pane, hotId));
     drawWires();
+    flushPendingFocus();
   });
 }
 
 /** Explicitly pinned sides survive source scrolling, including hidden ancestors. */
 function syncViewportSides(): void {
+  const offscreen: OffscreenSide[] = [];
   const cards = Array.from(el.columns.querySelectorAll(".card")) as HTMLElement[];
   cards.sort((a, b) => {
     const da = Number(a.dataset.depth ?? 0);
@@ -898,7 +967,93 @@ function syncViewportSides(): void {
     const parentCard = host?.closest(".card") as HTMLElement | null;
     const parentHidden = Boolean(host && (host.hidden || parentCard?.hidden));
     card.hidden = parentHidden || !host || visibleRects(host, node.viaRivetId).length === 0;
+    if (card.hidden && host && !parentHidden) {
+      const box = rectsForRivet(host, node.viaRivetId)[0];
+      const up = box ? box.bottom <= clipOf(host).top : pdfSourceAbove(node);
+      offscreen.push({ node, depth: node.depth, up });
+    }
   }
+  paintOffscreenHints(offscreen);
+}
+
+type OffscreenSide = { node: OpenNode; depth: number; up: boolean | null };
+
+/** Far PDF pages are not rastered, so compare the anchor page with the page being read. */
+function pdfSourceAbove(node: OpenNode): boolean | null {
+  const parent = state.nodes.find((n) => n.id === node.parentId);
+  const handle = parent ? pdfViews.get(parent.id) : undefined;
+  const page = parent && state.views[parent.pieceId]?.overlayRivets.find((r) => r.id === node.viaRivetId)?.anchors[0]?.page;
+  if (!handle || !page) return null;
+  const current = handle.currentPage();
+  return page === current ? null : page < current;
+}
+
+/** Rule 36 hides the card; the column keeps one line per hidden side that scrolls its source back. */
+function paintOffscreenHints(hidden: readonly OffscreenSide[]): void {
+  for (const column of el.columns.querySelectorAll<HTMLElement>(":scope > .column.stack")) {
+    const depth = Number(column.dataset.depth);
+    const mine = hidden.filter((entry) => entry.depth === depth);
+    const signature = mine.map((entry) => `${entry.node.id}:${entry.up}`).join("|");
+    let bar = column.querySelector<HTMLElement>(":scope > .offscreen-hints");
+    if ((bar?.dataset.signature ?? "") === signature) continue;
+    bar?.remove();
+    if (!mine.length) continue;
+    bar = document.createElement("div");
+    bar.className = "offscreen-hints";
+    bar.dataset.signature = signature;
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", "来源不在视野内的侧注");
+    for (const entry of mine) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const arrow = entry.up === null ? "↩" : entry.up ? "↑" : "↓";
+      const title = titleOf(entry.node.pieceId, excerptFor(entry.node));
+      btn.innerHTML = `<span class="arrow">${arrow}</span> `;
+      const label = document.createElement("span");
+      paintLabel(label, title);
+      btn.append(label);
+      btn.title = `来源在${entry.up === null ? "别处" : entry.up ? "上方" : "下方"}。点击滚回来源：${title}`;
+      btn.addEventListener("click", () => {
+        if (entry.node.parentId && entry.node.viaRivetId) revealRivet(entry.node.parentId, entry.node.viaRivetId);
+      });
+      bar.append(btn);
+    }
+    column.prepend(bar);
+  }
+}
+
+/** Scroll a host column so the rivet sits in its upper third. PDF hosts jump to the anchor. */
+function revealRivet(nodeId: string, rivetId: string): void {
+  const node = state.nodes.find((n) => n.id === nodeId);
+  const surface = surfaceOf(nodeId);
+  if (!node || !surface) return;
+  const card = surface.closest(".card") as HTMLElement | null;
+  const stack = card?.closest(".col-stack") as HTMLElement | null;
+  if (card && stack) {
+    const cardBox = card.getBoundingClientRect();
+    const stackBox = stack.getBoundingClientRect();
+    if (cardBox.top < stackBox.top || cardBox.bottom > stackBox.bottom) stack.scrollTop += cardBox.top - stackBox.top;
+  }
+  const overlay = state.views[node.pieceId]?.overlayRivets.find((r) => r.id === rivetId);
+  if (overlay?.anchors[0]) {
+    const handle = pdfViews.get(nodeId);
+    if (handle) handle.gotoAnchor(overlay.anchors[0]);
+    else pendingPinAnchor = { pieceId: node.pieceId, anchor: overlay.anchors[0] };
+    scheduleChrome();
+    return;
+  }
+  const pane = modeOf(nodeId) === "rendered"
+    ? surface.querySelector<HTMLElement>(".body-rendered")
+    : surface.querySelector<HTMLTextAreaElement>("textarea.editor");
+  const box = rectsForRivet(surface, rivetId)[0];
+  if (pane && box) {
+    pane.scrollTop += box.top - pane.getBoundingClientRect().top - pane.clientHeight / 3;
+  } else if (pane instanceof HTMLTextAreaElement) {
+    const start = state.views[node.pieceId]?.rivets.find((r) => r.id === rivetId)?.start ?? 0;
+    const lineHeight = Number.parseFloat(getComputedStyle(pane).lineHeight) || 24;
+    pane.scrollTop = Math.max(0, (pane.value.slice(0, start).split("\n").length - 2) * lineHeight);
+  }
+  scheduleChrome();
 }
 
 function alignCard(nodeId: string): void {
@@ -978,9 +1133,13 @@ function applyLibrary(library: LibraryDto): void {
   state.sidePins = loadSidePins(localStorage, library.root);
   pinBoard.setLibrary(library.root);
   state.pieces = library.pieces;
+  state.links = [];
+  pieceFolds.clear();
+  el.pieceFilter.value = "";
   const name = library.root.split(/[\\/]/).filter(Boolean).pop() ?? library.root;
   document.title = `intro — ${name}`;
   renderSidebar();
+  void refreshLinks();
 }
 
 function pruneDeletedNodes(deleted: ReadonlySet<string>): void {
@@ -999,11 +1158,11 @@ function pruneDeletedNodes(deleted: ReadonlySet<string>): void {
 async function confirmDropSide(pieceId: string): Promise<void> {
   const listed = state.pieces.find((p) => p.id === pieceId);
   if (listed?.medium === "pdf") {
-    setStatus("PDF hosts cannot be deleted from here.", true);
+    setStatus("PDF 不能在这里删除。", true);
     return;
   }
-  const label = listed?.title ?? pieceId;
-  if (!window.confirm(`Delete “${label}” and unreferenced children? This cannot be undone.`)) {
+  const label = titleOf(pieceId);
+  if (!window.confirm(`删除「${label}」以及只挂在它下面的笔记？此操作无法撤销。`)) {
     return;
   }
   const result = await window.intro.dropSide(pieceId);
@@ -1022,10 +1181,11 @@ async function confirmDropSide(pieceId: string): Promise<void> {
   state.pieces = result.pieces;
   renderSidebar();
   renderColumns();
+  void refreshLinks();
   setStatus(
     result.deleted.length === 1
-      ? `Deleted ${result.deleted[0]}`
-      : `Deleted ${result.deleted.length} pieces`,
+      ? `已删除「${label}」`
+      : `已删除「${label}」等 ${result.deleted.length} 篇笔记`,
   );
 }
 
@@ -1055,6 +1215,7 @@ async function detachNode(node: OpenNode): Promise<void> {
   }
   renderSidebar();
   renderColumns();
+  void refreshLinks();
   setStatus("已解除这条挂接，笔记及其他引用已保留。");
 }
 
@@ -1064,18 +1225,50 @@ function renderSidebar(): void {
   el.sidebarEmpty.textContent = state.root
     ? "空库。右键此处或 Ctrl+N 新建第一篇笔记。"
     : "File → Open library（Ctrl+O）打开一个文件夹。空文件夹就是新库。";
+  el.pieceFilter.hidden = !state.root || state.pieces.length === 0;
   const openIds = new Set(state.nodes.map((n) => n.pieceId));
-  for (const piece of state.pieces) {
+  const byId = new Map(state.pieces.map((p) => [p.id, p]));
+  const rows = pieceTree(state.pieces, state.links);
+  const query = el.pieceFilter.value.trim().toLocaleLowerCase();
+  const kept = query
+    ? filterRows(rows, (row) => `${titleOf(row.pieceId)} ${row.via?.excerpt ?? ""}`.toLocaleLowerCase().includes(query))
+    : null;
+  const shown = new Set<string>();
+  const hangs = new Map<string, number>();
+  for (const link of state.links) hangs.set(link.hostId, (hangs.get(link.hostId) ?? 0) + 1);
+  for (const row of rows) {
+    if (kept ? !kept.has(row.key) : row.parentKey !== null && !(shown.has(row.parentKey) && isUnfolded(rows, row.parentKey))) continue;
+    shown.add(row.key);
+    const piece = byId.get(row.pieceId);
+    if (!piece) continue;
     const li = document.createElement("li");
+    li.dataset.depth = String(row.depth);
+    li.style.paddingLeft = `${row.depth * 10}px`;
+    if (row.hasChildren && !kept) {
+      const fold = document.createElement("button");
+      fold.type = "button";
+      fold.className = "piece-fold";
+      const open = isUnfolded(rows, row.key);
+      fold.textContent = open ? "▾" : "▸";
+      fold.setAttribute("aria-expanded", String(open));
+      fold.setAttribute("aria-label", open ? "收起" : "展开");
+      fold.addEventListener("click", () => {
+        pieceFolds.set(row.key, !open);
+        renderSidebar();
+      });
+      li.append(fold);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "piece-fold-spacer";
+      li.append(spacer);
+    }
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "piece-open";
     const title = document.createElement("span");
     title.className = "piece-title";
-    title.textContent = piece.title;
-    const id = document.createElement("span");
-    id.className = "piece-id";
-    id.textContent = piece.id;
+    const label = titleOf(piece.id);
+    paintLabel(title, label);
     btn.append(title);
     if (piece.medium === "pdf") {
       const badge = document.createElement("span");
@@ -1083,21 +1276,128 @@ function renderSidebar(): void {
       badge.textContent = "PDF";
       btn.append(badge);
     }
-    btn.append(id);
-    btn.title = `${piece.title}\n${piece.id}\n${piece.path}`;
+    const metaText = row.via
+      ? [row.via.page ? `p${row.via.page}` : "", row.via.excerpt ? `「${row.via.excerpt}」` : ""].filter(Boolean).join(" ")
+      : hangs.get(piece.id) ? `${hangs.get(piece.id)} 处挂接` : "";
+    if (metaText) {
+      const meta = document.createElement("span");
+      meta.className = "piece-meta";
+      paintLabel(meta, metaText);
+      btn.append(meta);
+    }
+    btn.title = `${label}\n${piece.id}\n${piece.path}`;
     btn.classList.toggle("on", openIds.has(piece.id));
     btn.addEventListener("click", () => {
-      void openRootPiece(piece.id);
+      void (row.via ? openInContext(piece.id, row.via) : openRootPiece(piece.id));
     });
     btn.addEventListener("contextmenu", (ev) => {
       ev.stopPropagation();
       showCtxMenu(ev, [
-        { label: "打开", run: () => { void openRootPiece(piece.id); } },
+        { label: row.via ? "在原处打开" : "打开", run: () => { void (row.via ? openInContext(piece.id, row.via) : openRootPiece(piece.id)); } },
+        ...(row.via ? [{ label: "单独打开", run: () => { void openRootPiece(piece.id); } }] : []),
         { label: "删除笔记", danger: true, disabled: piece.medium !== "text", run: () => { void confirmDropSide(piece.id); } },
       ]);
     });
     li.append(btn);
     el.list.append(li);
+  }
+  if (query && !el.list.childElementCount) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "没有匹配的笔记";
+    el.list.append(li);
+  }
+}
+
+/** Expanded state of Pieces rows this session. Roots start open, nested groups closed. */
+const pieceFolds = new Map<string, boolean>();
+
+function isUnfolded(rows: readonly TreeRow[], key: string): boolean {
+  const stored = pieceFolds.get(key);
+  if (stored !== undefined) return stored;
+  return rows.find((row) => row.key === key)?.parentKey === null;
+}
+
+async function refreshLinks(): Promise<void> {
+  const root = state.root;
+  const result = await window.intro.listLinks();
+  if (!result.ok || state.root !== root) return;
+  state.links = result.links;
+  renderSidebar();
+  paintTitles();
+}
+
+/** Open the chain from its root host down to `pieceId`, scrolling each source into view. */
+async function openInContext(pieceId: string, via?: LinkDto): Promise<void> {
+  const path = hangPath(pieceId, state.links, via);
+  if (!path.length) {
+    await openRootPiece(pieceId);
+    return;
+  }
+  const ids = [path[0]!.hostId, ...path.map((link) => link.sideId)];
+  for (const id of ids) {
+    const result = await window.intro.loadPiece(id);
+    if (!result.ok) {
+      setStatus(result.error, true);
+      return;
+    }
+    state.views[id] = result.piece;
+  }
+  state.nodes = openRoot(path[0]!.hostId);
+  state.modes[ROOT_ID] = "rendered";
+  let parent = ROOT_ID;
+  for (const link of path) {
+    state.nodes = openSide(state.nodes, parent, link.sideId, link.rivetId);
+    parent = link.rivetId;
+  }
+  const first = path[0]!;
+  const anchor = state.views[first.hostId]?.overlayRivets.find((r) => r.id === first.rivetId)?.anchors[0];
+  if (anchor) pendingPinAnchor = { pieceId: first.hostId, anchor };
+  pendingAlign = path[path.length - 1]!.rivetId;
+  columnStart = Math.max(0, path.length - 2);
+  renderSidebar();
+  renderColumns();
+  setStatus(`已在原处打开「${titleOf(pieceId)}」`);
+  let host = ROOT_ID;
+  for (const link of path) {
+    if (state.views[link.hostId]?.medium === "pdf") {
+      await waitFor(() => pdfViews.has(host) && rectsForRivet(surfaceOf(host) ?? document, link.rivetId).length > 0);
+    } else {
+      await waitFor(() => Boolean(surfaceOf(host) && !(surfaceOf(host)!.closest(".card") as HTMLElement | null)?.hidden));
+      revealRivet(host, link.rivetId);
+    }
+    host = link.rivetId;
+  }
+}
+
+/** Resolve after `ready()` holds on a painted frame, or give up after `ms`. */
+async function waitFor(ready: () => boolean, ms = 4000): Promise<void> {
+  const until = performance.now() + ms;
+  while (performance.now() < until) {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (ready()) return;
+  }
+}
+
+/** For a note opened on its own: where it is hung, each a way back into that chain. */
+function paintBacklinks(): void {
+  for (const bar of el.columns.querySelectorAll<HTMLElement>(".backlinks")) {
+    const pieceId = bar.dataset.pieceId!;
+    const links = state.links.filter((link) => link.sideId === pieceId);
+    bar.replaceChildren();
+    bar.hidden = links.length === 0;
+    if (!links.length) continue;
+    const lead = document.createElement("span");
+    lead.textContent = "挂在：";
+    bar.append(lead);
+    for (const link of links) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      paintLabel(btn, `${titleOf(link.hostId)}${link.page ? ` · p${link.page}` : ""}${link.excerpt ? ` 「${link.excerpt}」` : ""}`);
+      btn.title = "在原处打开这条挂接";
+      btn.addEventListener("click", () => { void openInContext(pieceId, link); });
+      bar.append(btn);
+    }
   }
 }
 
@@ -1110,9 +1410,18 @@ function disposePdfViews(): void {
 
 function renderColumns(): void {
   const drafts = new Map<string, { pieceId: string | undefined; value: string; top: number; start: number; end: number }>();
+  // Rebuilding must not move a reading position: a child hidden by scrolling its source away would look unopened.
+  const renderedTops = new Map<string, { pieceId: string | undefined; top: number }>();
+  const stackTops = new Map<string, number>();
   for (const surface of el.columns.querySelectorAll<HTMLElement>("[data-node-id]")) {
     const editor = surface.querySelector<HTMLTextAreaElement>("textarea.editor");
     if (editor) drafts.set(surface.dataset.nodeId!, { pieceId: surface.dataset.pieceId, value: editor.value, top: editor.scrollTop, start: editor.selectionStart, end: editor.selectionEnd });
+    const rendered = surface.querySelector<HTMLElement>(".body-rendered");
+    if (rendered && !rendered.hidden) renderedTops.set(surface.dataset.nodeId!, { pieceId: surface.dataset.pieceId, top: rendered.scrollTop });
+  }
+  for (const stack of el.columns.querySelectorAll<HTMLElement>(".col-stack")) {
+    const depth = (stack.closest(".column") as HTMLElement | null)?.dataset.depth;
+    if (depth) stackTops.set(depth, stack.scrollTop);
   }
   const keep = new Set(state.nodes.map((n) => n.id));
   disposePdfViews();
@@ -1154,6 +1463,17 @@ function renderColumns(): void {
     editor.setSelectionRange(draft.start, draft.end);
     paintSurface(surface);
   }
+  for (const [id, saved] of renderedTops) {
+    const surface = surfaceOf(id);
+    if (!surface || surface.dataset.pieceId !== saved.pieceId) continue;
+    const rendered = surface.querySelector<HTMLElement>(".body-rendered");
+    if (rendered && !rendered.hidden) rendered.scrollTop = saved.top;
+  }
+  for (const stack of el.columns.querySelectorAll<HTMLElement>(".col-stack")) {
+    const top = stackTops.get((stack.closest(".column") as HTMLElement | null)?.dataset.depth ?? "");
+    if (top !== undefined) stack.scrollTop = top;
+  }
+  paintBacklinks();
   scheduleChrome();
 }
 
@@ -1178,7 +1498,7 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   editor.className = "editor";
   editor.spellcheck = false;
   editor.value = view?.clean ?? "";
-  editor.placeholder = "Write clean body text. TeX source can stay as $...$.";
+  editor.placeholder = "在这里写笔记。公式直接写 $…$。";
   try {
     const draft = JSON.parse(localStorage.getItem(draftKey(node.pieceId)) ?? "null");
     if (draft && draft.text !== editor.value) {
@@ -1242,8 +1562,8 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
       editor.focus();
       setStatus(
         sideId
-          ? "Select a span in source, then hang an existing piece."
-          : "Select a span in source, then New side.",
+          ? "已切到源文。先划选一段，再挂接已有笔记。"
+          : "已切到源文。先划选一段，再新建侧注。",
       );
       return;
     }
@@ -1305,6 +1625,11 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
   });
   rendered.addEventListener("click", (ev) => {
     if (!window.getSelection()?.isCollapsed) return;
+    const pageRef = (ev.target as HTMLElement).closest<HTMLElement>(".page-ref");
+    if (pageRef?.dataset.pdf && pageRef.dataset.page) {
+      void gotoPdfPage(pageRef.dataset.pdf, Number(pageRef.dataset.page));
+      return;
+    }
     const mathematical = (ev.target as HTMLElement).closest<HTMLElement>("[data-math-rivets]");
     if (mathematical) {
       const ids = mathematical.dataset.mathRivets!.split(" ");
@@ -1337,7 +1662,7 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
     rivets.append(heading);
     const openIds = new Set(openRivetIds(state.nodes, node.id));
     if (view) {
-      for (const rivet of view.rivets) {
+      for (const rivet of [...view.rivets].sort((a, b) => a.start - b.start)) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "rivet";
@@ -1352,7 +1677,7 @@ function bindSurface(node: OpenNode, surface: HTMLElement): HTMLTextAreaElement 
           to.dataset.to = rivet.to;
           to.textContent = `→ ${titleOf(rivet.to)}`;
         } else {
-          to.textContent = "(no side)";
+          to.textContent = "（未挂侧注）";
         }
         btn.append(quote, to);
         btn.disabled = !rivet.to;
@@ -1392,20 +1717,22 @@ function appendRivetButtons(
       btn.dataset.page = String(rivet.page);
     }
     btn.classList.toggle("open", openIds.has(rivet.id));
-    const quote = document.createElement("span");
-    quote.className = "quote";
-    quote.textContent = `「${rivet.label}」`;
+    if (rivet.label) {
+      const quote = document.createElement("span");
+      quote.className = "quote";
+      quote.textContent = `「${rivet.label}」`;
+      btn.append(quote);
+    }
     const to = document.createElement("span");
     to.className = "muted rivet-to";
+    if (rivet.page != null) to.dataset.page = String(rivet.page);
     if (rivet.to) {
       to.dataset.to = rivet.to;
-      to.textContent = rivet.page != null
-        ? `p${rivet.page} → ${titleOf(rivet.to)}`
-        : `→ ${titleOf(rivet.to)}`;
+      paintLabel(to, `${rivet.page != null ? `p${rivet.page} ` : ""}→ ${titleOf(rivet.to)}`);
     } else {
-      to.textContent = rivet.page != null ? `p${rivet.page}` : "(no side)";
+      to.textContent = rivet.page != null ? `p${rivet.page}` : "（未挂侧注）";
     }
-    btn.append(quote, to);
+    btn.append(to);
     btn.disabled = !rivet.to && onJump == null;
     btn.addEventListener("pointerenter", () => {
       setHot(rivet.id);
@@ -1494,26 +1821,54 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
   const rivetNav = document.createElement("nav");
   rivetNav.className = "pdf-outline-drawer pdf-rivets-drawer";
   rivetNav.hidden = true;
+  const byPage = [...(view?.overlayRivets ?? [])].sort((a, b) => overlayOrder(a) - overlayOrder(b));
+  let thumbsStarted = false;
+  const paintThumbs = async (): Promise<void> => {
+    thumbsStarted = true;
+    const load = async (): Promise<Uint8Array> => {
+      const result = await window.intro.readPdf(node.pieceId);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
+    };
+    for (const rivet of byPage) {
+      const anchor = rivet.anchors[0];
+      const btn = rivetNav.querySelector<HTMLElement>(`button.rivet[data-rivet="${CSS.escape(rivet.id)}"]`);
+      if (rivet.quote || !anchor || !btn?.isConnected) continue;
+      try {
+        const full = await renderPdfExcerpt(node.pieceId, load, anchor);
+        const ratio = Math.min(1, THUMB_WIDTH / full.width);
+        const thumb = document.createElement("canvas");
+        thumb.width = Math.max(1, Math.round(full.width * ratio));
+        thumb.height = Math.max(1, Math.round(full.height * ratio));
+        thumb.getContext("2d")!.drawImage(full, 0, 0, thumb.width, thumb.height);
+        full.width = full.height = 1;
+        thumb.className = "thumb";
+        thumb.setAttribute("aria-hidden", "true");
+        btn.prepend(thumb);
+      } catch { /* Thumbnail is decoration; the page label stays. */ }
+    }
+  };
   const setRivetsOpen = (on: boolean): void => {
     rivetNav.hidden = !on;
     rivetSummary.classList.toggle("on", on);
     rivetSummary.setAttribute("aria-expanded", String(on));
+    if (on && !thumbsStarted) void paintThumbs();
   };
   setRivetsOpen(false);
   rivetNav.setAttribute("aria-label", "Overlay rivets");
   if (!view || overlayCount === 0) {
     const empty = document.createElement("p");
     empty.className = "muted empty-rivets";
-    empty.textContent = "No overlay rivets yet. Drag a region, then New side.";
+    empty.textContent = "还没有挂接。在页上拖出一块区域，右键 New side。";
     rivetNav.append(empty);
   } else {
     appendRivetButtons(
       rivetNav,
       node,
-      view.overlayRivets.map((rivet) => ({
+      byPage.map((rivet) => ({
         id: rivet.id,
         to: rivet.to,
-        label: overlayQuote(rivet),
+        label: rivet.quote ? overlayQuote(rivet) : "",
         page: rivet.anchors[0]?.page,
       })),
       (_id, page) => {
@@ -1553,7 +1908,7 @@ function bindPdfHost(node: OpenNode, surface: HTMLElement): void {
     const pinnedSelection = pdfViews.get(node.id)?.getSelection();
     const hasSel = Boolean(pdfViews.get(node.id)?.getSelection()?.anchors.length);
     if (!hasSel) {
-      setStatus("Drag a region on the PDF first.", true);
+      setStatus("先在 PDF 上拖出一块区域。", true);
     }
     showCtxMenu(ev, [
       { label: "Ask Codex…", disabled: !hasSel,
@@ -1717,24 +2072,17 @@ function renderHost(node: OpenNode): HTMLElement {
 
   const head = document.createElement("div");
   head.className = "column-head";
-  const depth = document.createElement("span");
-  depth.className = "depth";
-  depth.textContent = "d0";
   const titles = document.createElement("div");
   titles.className = "head-titles";
   const name = document.createElement("span");
   name.className = "piece-title";
-  name.textContent = titleOf(node.pieceId);
-  name.title = view?.path ?? node.pieceId;
-  const id = document.createElement("span");
-  id.className = "id piece-id";
-  id.textContent = node.pieceId;
-  id.title = node.pieceId;
-  titles.append(name, id);
+  paintLabel(name, titleOf(node.pieceId));
+  name.title = [titleOf(node.pieceId), node.pieceId, view?.path].filter(Boolean).join("\n");
+  titles.append(name);
   const rename = document.createElement("button");
   rename.type = "button";
   rename.textContent = "Rename";
-  rename.title = "Set display name. File id stays the same.";
+  rename.title = "修改显示名称；文件 ID 不变。";
   rename.addEventListener("click", () => {
     void renamePiece(node.pieceId);
   });
@@ -1745,10 +2093,17 @@ function renderHost(node: OpenNode): HTMLElement {
     state.nodes = closeNode(state.nodes, ROOT_ID);
     renderSidebar();
     renderColumns();
-    setStatus("Closed the chain. Rivets stay on disk.");
+    setStatus("已关闭这条阅读链；挂接仍保存在库里。");
   });
-  head.append(depth, titles, rename, close);
+  head.append(titles, rename, close);
   section.append(head);
+  if (view?.medium !== "pdf") {
+    const backlinks = document.createElement("div");
+    backlinks.className = "backlinks";
+    backlinks.dataset.pieceId = node.pieceId;
+    backlinks.hidden = true;
+    section.append(backlinks);
+  }
   if (view?.medium === "pdf") {
     bindPdfHost(node, section);
   } else {
@@ -1796,7 +2151,7 @@ function renderCard(node: OpenNode): HTMLElement {
   titles.className = "head-titles";
   const name = document.createElement("strong");
   name.className = "piece-title";
-  name.textContent = titleOf(node.pieceId, excerptFor(node));
+  paintLabel(name, titleOf(node.pieceId, excerptFor(node)));
   name.title = [titleOf(node.pieceId, excerptFor(node)), node.pieceId, view?.path]
     .filter(Boolean)
     .join("\n");
@@ -1804,7 +2159,7 @@ function renderCard(node: OpenNode): HTMLElement {
   if (parent) {
     const from = document.createElement("div");
     from.className = "from";
-    from.textContent = `← ${titleOf(parent.pieceId)}`;
+    paintLabel(from, `← ${titleOf(parent.pieceId)}`);
     titles.append(from);
   }
   let detaching = false;
@@ -1816,7 +2171,7 @@ function renderCard(node: OpenNode): HTMLElement {
         state.nodes = closeNode(state.nodes, node.id);
         renderSidebar();
         renderColumns();
-        setStatus("Closed this side and its subtree. Rivets stay on disk.");
+        setStatus("已收起这篇侧注及其下层；挂接仍保存在库里。");
       },
     },
     {
@@ -1849,6 +2204,7 @@ function renderCard(node: OpenNode): HTMLElement {
   const heightKey = cardHeightKey(state.root ?? "", node.id);
   const savedHeight = loadCardHeight(localStorage, heightKey);
   if (savedHeight !== null) card.style.height = `${savedHeight}px`;
+  else card.dataset.autoHeight = "true";
   // Old independent top gaps are deliberately ignored: adjacent cards share an edge.
   const nextVisibleCard = (): HTMLElement | undefined => {
     let next = card.nextElementSibling as HTMLElement | null;
@@ -1877,9 +2233,11 @@ function renderCard(node: OpenNode): HTMLElement {
         ? resizeCardPair(startHeight, lowerHeight, delta)
         : [clampCardHeight(startHeight + delta), 0];
       if (lower && lowerKey) {
+        delete lower.dataset.autoHeight;
         lower.style.height = `${below}px`;
         saveCardHeight(localStorage, lowerKey, below);
       }
+      delete card.dataset.autoHeight;
       card.style.height = `${height}px`;
       saveCardHeight(localStorage, heightKey, height);
       scheduleChrome();
@@ -1897,9 +2255,11 @@ function renderCard(node: OpenNode): HTMLElement {
   });
   resize.addEventListener("dblclick", () => {
     card.style.removeProperty("height");
+    card.dataset.autoHeight = "true";
     const lower = nextVisibleCard();
     if (lower) {
       lower.style.removeProperty("height");
+      lower.dataset.autoHeight = "true";
       saveCardHeight(localStorage, cardHeightKey(state.root ?? "", lower.dataset.nodeId!), null);
     }
     saveCardHeight(localStorage, heightKey, null);
@@ -1974,8 +2334,15 @@ async function persistNow(id: string, clean: string): Promise<void> {
     }
     paintSurface(surface);
   });
+  const listed = state.pieces.find((p) => p.id === id);
+  if (listed && listed.title !== result.piece.title) {
+    state.pieces = state.pieces.map((p) => (p.id === id ? { ...p, title: result.piece.title } : p));
+    renderSidebar();
+    paintTitles();
+  }
+  if (result.piece.rivets.length) void refreshLinks();
   scheduleChrome();
-  setStatus(`Saved ${id}`);
+  setStatus(`已保存「${titleOf(id)}」`);
 }
 
 async function hangFromPdf(parentId: string, sideId: string | undefined): Promise<void> {
@@ -1986,7 +2353,7 @@ async function hangFromPdf(parentId: string, sideId: string | undefined): Promis
   const view = pdfViews.get(parentId);
   const selection = view?.getSelection();
   if (!selection || selection.anchors.length === 0) {
-    setStatus("Drag a region on the PDF first.", true);
+    setStatus("先在 PDF 上拖出一块区域。", true);
     return;
   }
   const result = await window.intro.hangPdfSide({
@@ -2013,12 +2380,40 @@ async function hangFromPdf(parentId: string, sideId: string | undefined): Promis
     | HTMLTextAreaElement
     | undefined;
   focus?.focus();
+  if (!sideId) focusWhenShown(result.rivetId);
   setHot(result.rivetId);
+  void refreshLinks();
+  const page = selection.anchors[0]?.page;
   setStatus(
     sideId
-      ? `Hung existing ${result.side.id} from PDF overlay ${result.rivetId}`
-      : `Created side ${result.side.id} from PDF overlay ${result.rivetId}`,
+      ? `已把「${titleOf(result.side.id)}」挂到第 ${page} 页`
+      : `已在第 ${page} 页新建侧注，直接输入即可`,
   );
+}
+
+/** A new card can start hidden (the PDF overlay repaints after the column rebuild), so focus it once it shows. */
+let pendingFocus: { nodeId: string; until: number } | null = null;
+
+function focusWhenShown(nodeId: string): void {
+  pendingFocus = { nodeId, until: performance.now() + 3000 };
+  scheduleChrome();
+}
+
+function flushPendingFocus(): void {
+  if (!pendingFocus) return;
+  if (performance.now() > pendingFocus.until) {
+    pendingFocus = null;
+    return;
+  }
+  const surface = surfaceOf(pendingFocus.nodeId);
+  const card = surface?.closest(".card") as HTMLElement | null;
+  const editor = surface?.querySelector<HTMLTextAreaElement>("textarea.editor");
+  if (!editor || card?.hidden || editor.closest("[hidden]")) {
+    window.setTimeout(scheduleChrome, 100);
+    return;
+  }
+  pendingFocus = null;
+  if (document.activeElement !== editor) editor.focus();
 }
 
 type AiOptions = { question: string; model: string; effort: string; web: boolean };
@@ -2127,7 +2522,7 @@ async function askCodex(parentId: string, selection: AiSelection, intent: 'note'
       saveSidePins(localStorage, state.root!, state.sidePins);
       renderColumns(); setHot(saved.rivetId);
     }
-    renderSidebar(); ui.panel.remove(); setStatus('Codex 回答已保存为 side。');
+    renderSidebar(); void refreshLinks(); ui.panel.remove(); setStatus('Codex 回答已保存为侧注。');
   } catch (error) {
     if (cancelled) return;
     ui.message.textContent = error instanceof Error ? error.message : String(error);
@@ -2182,7 +2577,7 @@ async function showCodexDrafts(): Promise<void> {
         const pieces = await window.intro.listPieces(); if (pieces.ok) state.pieces = pieces.pieces;
         const parent = state.nodes.find(n => n.pieceId === job.hostId);
         if (parent) { state.nodes = openSide(state.nodes, parent.id, result.side.id, result.rivetId); state.modes[result.rivetId] = 'rendered'; pendingAlign = result.rivetId; }
-        renderSidebar(); renderColumns(); title.textContent = '已挂回原选区';
+        renderSidebar(); renderColumns(); void refreshLinks(); title.textContent = '已挂回原选区';
       };
       row.append(attach);
     }
@@ -2263,7 +2658,7 @@ async function hangFromEditor(
   const start = editor.selectionStart;
   const end = editor.selectionEnd;
   if (start === end) {
-    setStatus("Select a span in this column first.", true);
+    setStatus("先在这一列划选一段。", true);
     return;
   }
   const saved = await saveSource(host.pieceId, editor.value);
@@ -2294,11 +2689,13 @@ async function hangFromEditor(
     | HTMLTextAreaElement
     | undefined;
   focus?.focus();
+  if (!sideId) focusWhenShown(result.rivetId);
   setHot(result.rivetId);
+  void refreshLinks();
   setStatus(
     sideId
-      ? `Hung existing ${result.side.id} from ${result.host.id}`
-      : `Created side ${result.side.id} and wrote rivet ${result.rivetId}`,
+      ? `已把「${titleOf(result.side.id)}」挂到「${titleOf(result.host.id)}」`
+      : "已新建侧注，直接输入即可",
   );
 }
 
@@ -2317,11 +2714,70 @@ async function openRootPiece(id: string): Promise<void> {
     const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
     editor?.focus();
   }
-  setStatus(
-    result.piece.medium === "pdf"
-      ? `Opened PDF host ${result.piece.title}`
-      : `Opened ${result.piece.title}`,
-  );
+  setStatus(`已打开「${titleOf(id)}」`);
+}
+
+/** Jump the reading chain's PDF to a page; open that PDF first when it is not the current host. */
+async function gotoPdfPage(pdfId: string, page: number): Promise<void> {
+  pendingPdfPage = { nodeId: ROOT_ID, page };
+  const handle = state.nodes[0]?.pieceId === pdfId ? pdfViews.get(ROOT_ID) : undefined;
+  if (handle) {
+    showColumnWindow(0);
+    handle.gotoPage(page);
+    pendingPdfPage = null;
+    setStatus(`已跳到「${titleOf(pdfId)}」第 ${page} 页`);
+    return;
+  }
+  await openRootPiece(pdfId);
+}
+
+const PAGE_REF = /PDF\s*第\s*(\d+)\s*页/g;
+
+/** PDF the note reads from: the current chain's PDF root, else its hang root, else the library's only PDF. */
+function pdfOfNote(pieceId: string): string | null {
+  const isPdf = (id: string | undefined): id is string =>
+    Boolean(id && state.pieces.find((p) => p.id === id)?.medium === "pdf");
+  const chainRoot = state.nodes[0]?.pieceId;
+  if (isPdf(chainRoot) && state.nodes.some((n) => n.pieceId === pieceId)) return chainRoot;
+  const hangRoot = hangPath(pieceId, state.links)[0]?.hostId;
+  if (isPdf(hangRoot)) return hangRoot;
+  const pdfs = state.pieces.filter((p) => p.medium === "pdf");
+  return pdfs.length === 1 ? pdfs[0]!.id : null;
+}
+
+/** Wrap "PDF 第 N 页" in rendered text as a jump. Text content is unchanged, so offsets still map. */
+function linkPageRefs(pane: HTMLElement, pieceId: string): void {
+  if (!pane.textContent || !/PDF\s*第\s*\d+\s*页/.test(pane.textContent)) return;
+  const pdfId = pdfOfNote(pieceId);
+  if (!pdfId) return;
+  const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, {
+    acceptNode: (text) => (text.parentElement?.closest(".katex, mark, code, pre, .page-ref")
+      ? NodeFilter.FILTER_REJECT
+      : NodeFilter.FILTER_ACCEPT),
+  });
+  const texts: Text[] = [];
+  while (walker.nextNode()) texts.push(walker.currentNode as Text);
+  for (const text of texts) {
+    const value = text.data;
+    PAGE_REF.lastIndex = 0;
+    if (!PAGE_REF.test(value)) continue;
+    PAGE_REF.lastIndex = 0;
+    const parts = document.createDocumentFragment();
+    let at = 0;
+    for (const match of value.matchAll(PAGE_REF)) {
+      parts.append(value.slice(at, match.index));
+      const ref = document.createElement("span");
+      ref.className = "page-ref";
+      ref.dataset.pdf = pdfId;
+      ref.dataset.page = match[1]!;
+      ref.title = `跳到「${titleOf(pdfId)}」第 ${match[1]} 页`;
+      ref.textContent = match[0];
+      parts.append(ref);
+      at = match.index + match[0].length;
+    }
+    parts.append(value.slice(at));
+    text.replaceWith(parts);
+  }
 }
 
 async function toggleSideColumn(
@@ -2335,7 +2791,7 @@ async function toggleSideColumn(
     renderSidebar();
     renderColumns();
     setHot(null);
-    setStatus("Closed this side and its subtree. Rivets stay on disk.");
+    setStatus("已收起这篇侧注及其下层；挂接仍保存在库里。");
     return;
   }
   await openSideColumn(parentId, pieceId, rivetId);
@@ -2352,13 +2808,12 @@ async function openSideColumn(
     return;
   }
   state.views[pieceId] = result.piece;
-  const already = state.nodes.some((n) => n.parentId === parentId && n.viaRivetId === rivetId);
   state.nodes = openSide(state.nodes, parentId, pieceId, rivetId);
   pendingAlign = rivetId;
   renderSidebar();
   renderColumns();
   setHot(rivetId);
-  setStatus(already ? `Focused side ${result.piece.title}` : `Opened side ${result.piece.title}`);
+  setStatus(`已打开侧注「${titleOf(pieceId, excerptFor(state.nodes.find((n) => n.id === rivetId)!))}」`);
 }
 
 async function openLibraryCommand(): Promise<void> {
@@ -2375,7 +2830,7 @@ async function openLibraryCommand(): Promise<void> {
   state.modes = {};
   forgetAllPdfDocs();
   renderColumns();
-  setStatus(`Library ${result.library.root}`);
+  setStatus(`已打开资料库 ${result.library.root}`);
 }
 
 function requireOpenLibrary(): boolean {
@@ -2398,7 +2853,13 @@ async function openPdfCommand(): Promise<void> {
   state.nodes = openRoot(result.piece.id);
   renderSidebar();
   renderColumns();
-  setStatus(`Attached PDF host ${result.piece.title} (overlay sidecar; PDF not rewritten)`);
+  const title = titleOf(result.piece.id);
+  const stray = result.sourceInLibrary && !result.sourcePath.endsWith(`${result.piece.id}.pdf`)
+    ? `所选文件 ${result.sourcePath} 在库目录里，和库内的 PDF 内容相同，可以自行删除。`
+    : "";
+  setStatus(result.existing
+    ? `这本 PDF 已在库里，已打开现有的「${title}」，没有再复制一份。${stray}`
+    : `已附入「${title}」。原 PDF 不会被改写。${stray}`);
 }
 
 async function newPieceCommand(): Promise<void> {
@@ -2423,7 +2884,7 @@ async function newPieceCommand(): Promise<void> {
   renderColumns();
   const editor = el.columns.querySelector("textarea.editor") as HTMLTextAreaElement | null;
   editor?.focus();
-  setStatus(`Created ${result.piece.title}`);
+  setStatus(`已新建「${titleOf(result.piece.id)}」`);
 }
 
 window.intro.onMenuCommand((command) => {
@@ -2438,7 +2899,7 @@ window.intro.onLibraryOpened((library) => {
   applyLibrary(library);
   forgetAllPdfDocs();
   renderColumns();
-  setStatus(`Library ${library.root}`);
+  setStatus(`已打开资料库 ${library.root}`);
 });
 
 el.columns.addEventListener("scroll", scheduleChrome);
@@ -2464,6 +2925,7 @@ bindVSplitter(el.splitSidebar, {
 el.hidePieces.addEventListener("click", () => {
   applySidebarHidden(true);
 });
+el.pieceFilter.addEventListener("input", renderSidebar);
 el.sidebar.addEventListener("contextmenu", (ev) => {
   showCtxMenu(ev, [
     { label: "New piece", disabled: !state.root, run: () => { void newPieceCommand(); } },
