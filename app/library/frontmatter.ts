@@ -102,6 +102,18 @@ export function withTitle(raw: string, title: string | undefined): string {
   });
 }
 
+const FIRST_LINE_MAX = 60;
+
+/** First written line of a clean body, without leading Markdown block markers. Label only. */
+export function firstLine(clean: string): string | undefined {
+  for (const raw of clean.split(/\r?\n/)) {
+    const line = raw.replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)*/, "").trim();
+    if (!line || /^(?:\$\$|\\\[|\\\]|```|~~~|---+)$/.test(line)) continue;
+    return line.length <= FIRST_LINE_MAX ? line : `${line.slice(0, FIRST_LINE_MAX)}…`;
+  }
+  return undefined;
+}
+
 /** UI label. Empty title → excerpt, else PDF filename, else short id. Never a second identity. */
 export function displayTitle(opts: {
   id: string;

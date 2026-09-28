@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   displayTitle,
+  firstLine,
   joinDoc,
   setMatterTitle,
   shortId,
@@ -32,6 +33,17 @@ describe("displayTitle", () => {
       "paper.pdf",
     );
     assert.equal(displayTitle({ id: "pdf01", medium: "pdf" }), "pdf01");
+  });
+});
+
+describe("firstLine", () => {
+  it("takes the first written line without block markers", () => {
+    assert.equal(firstLine("\n\n## 设 $V(S)$ 为价值\n第二行"), "设 $V(S)$ 为价值");
+    assert.equal(firstLine("$$\nx^2\n$$\n解释"), "x^2");
+    assert.equal(firstLine("> 引用一句"), "引用一句");
+    assert.equal(firstLine("1. 买入"), "买入");
+    assert.equal(firstLine("   \n  "), undefined);
+    assert.equal(firstLine("字".repeat(70)), `${"字".repeat(60)}…`);
   });
 });
 

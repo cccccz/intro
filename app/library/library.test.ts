@@ -116,14 +116,20 @@ describe("display titles", () => {
     assert.equal(lib.list().find((p) => p.id === "host01")?.title, "Proof sketch");
   });
 
-  it("falls back to short id; PDF defaults to the filename; sides use frontmatter", () => {
+  it("falls back to the first line, then short id; PDF defaults to the filename; sides use frontmatter", () => {
     const lib = tmpLibrary();
     lib.createPiece({ id: "note01", body: "x" });
-    assert.equal(lib.load("note01").title, "note01");
+    assert.equal(lib.load("note01").title, "x");
     assert.equal(lib.load("note01").titled, false);
     lib.saveTitle("note01", "   ");
-    assert.equal(lib.load("note01").title, "note01");
+    assert.equal(lib.load("note01").title, "x");
     assert.equal(fs.readFileSync(path.join(lib.root, "note01.intro.md"), "utf8"), "x");
+    lib.createPiece({ id: "empty01", body: "" });
+    assert.equal(lib.load("empty01").title, "empty01");
+    const marked = add("对数正态的峰值\n第二行", [{ id: "rv1", to: "side01", start: 0, end: 4 }]);
+    assert.equal(lib.save("empty01", marked).title, "对数正态的峰值");
+    assert.equal(lib.list().find((p) => p.id === "empty01")?.title, "对数正态的峰值");
+    assert.equal(lib.load("empty01").titled, false);
     const src = path.join(lib.root, "paper.pdf");
     fs.writeFileSync(src, minimalPdf());
     const host = lib.attachPdf(src, { id: "pdf01" });
@@ -160,6 +166,27 @@ describe("PDF host on disk", () => {
     assert.equal(lib.list().find((p) => p.id === "host01")?.title, "_incoming.pdf");
     assert.equal(host.title, "_incoming.pdf");
     assert.equal(fs.existsSync(path.join(lib.root, "host01.intro.md")), false);
+  });
+
+  it("finds an attached copy with the same bytes and knows files inside the library", () => {
+    const lib = tmpLibrary();
+    const inside = path.join(lib.root, "book.pdf");
+    fs.writeFileSync(inside, minimalPdf("book"));
+    assert.equal(lib.findPdfCopy(inside), null);
+    assert.equal(lib.contains(inside), true);
+    lib.attachPdf(inside, { id: "pdf01" });
+    assert.equal(lib.findPdfCopy(inside), "pdf01");
+    assert.equal(lib.findPdfCopy(path.join(lib.root, "pdf01.pdf")), "pdf01");
+
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "intro-src-"));
+    temps.push(outsideDir);
+    const same = path.join(outsideDir, "renamed.pdf");
+    fs.writeFileSync(same, minimalPdf("book"));
+    const other = path.join(outsideDir, "other.pdf");
+    fs.writeFileSync(other, minimalPdf("other book"));
+    assert.equal(lib.contains(same), false);
+    assert.equal(lib.findPdfCopy(same), "pdf01");
+    assert.equal(lib.findPdfCopy(other), null);
   });
 
   it("refuses to save text marks onto a PDF host", () => {

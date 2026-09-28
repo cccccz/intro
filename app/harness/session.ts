@@ -13,6 +13,7 @@ import {
   persistClean,
   pieceView,
 } from "../write/loop.ts";
+import { libraryLinks } from "../write/links.ts";
 
 const AI_OFF = "这条浏览器回路不运行 Codex。";
 
@@ -77,6 +78,8 @@ export class HarnessSession {
       }
       case "listPieces":
         return { ok: true, pieces: this.libraryDto().pieces };
+      case "listLinks":
+        return { ok: true, links: libraryLinks(lib) };
       case "createPiece": {
         const opts = (args[0] ?? {}) as { id?: string; body?: string; title?: string };
         const piece = lib.createPiece({ id: opts.id, body: opts.body ?? "", title: opts.title });

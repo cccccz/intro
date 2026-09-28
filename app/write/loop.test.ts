@@ -150,7 +150,7 @@ describe("M1 write loop on disk", () => {
 
     const view = pieceView(lib.load("host01"));
     assert.equal(view.clean, "宿主一段可以再挂侧边。");
-    assert.equal(view.title, "host01");
+    assert.equal(view.title, "宿主一段可以再挂侧边。");
     assert.equal(view.titled, false);
     assert.equal(view.rivets[0].to, first.side.id);
     lib.saveTitle("host01", "Host note");

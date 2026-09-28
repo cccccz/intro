@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isPieceId, ulid } from "../marks/id.ts";
+import { strip } from "../marks/strip.ts";
 import {
   HOST_EXT,
   createHostMeta,
@@ -19,6 +20,7 @@ import {
 } from "../pdf/overlay.ts";
 import {
   displayTitle,
+  firstLine,
   joinDoc,
   normalizeTitle,
   setMatterTitle,
@@ -92,13 +94,19 @@ function indexPieces(root: string): Map<string, PieceIndexEntry> {
   return map;
 }
 
+function textTitle(id: string, matterLines: readonly string[], body: string): Pick<TextPiece, "title" | "titled"> {
+  const rawTitle = titleFromMatter(matterLines);
+  return {
+    titled: Boolean(rawTitle),
+    title: displayTitle({ id, title: rawTitle, excerpt: firstLine(strip(body)), medium: "text" }),
+  };
+}
+
 function textFields(id: string, raw: string): Pick<TextPiece, "body" | "title" | "titled" | "matterLines"> {
   const split = splitDoc(raw);
-  const rawTitle = titleFromMatter(split.matterLines);
   return {
     body: split.body,
-    titled: Boolean(rawTitle),
-    title: displayTitle({ id, title: rawTitle, medium: "text" }),
+    ...textTitle(id, split.matterLines, split.body),
     matterLines: split.matterLines,
   };
 }
@@ -181,14 +189,12 @@ export class Library {
       ? setMatterTitle(incoming.matterLines, opts.title)
       : incoming.matterLines;
     writeTextFile(filePath, matterLines, incoming.body);
-    const rawTitle = titleFromMatter(matterLines);
     return {
       id,
       path: filePath,
       medium: "text",
       body: incoming.body,
-      titled: Boolean(rawTitle),
-      title: displayTitle({ id, title: rawTitle, medium: "text" }),
+      ...textTitle(id, matterLines, incoming.body),
       matterLines,
     };
   }
@@ -233,6 +239,32 @@ export class Library {
     };
   }
 
+  /** An attached PDF host whose bytes equal `fromPath`, so attaching it again would only duplicate them. */
+  findPdfCopy(fromPath: string): string | null {
+    const source = path.resolve(fromPath);
+    const size = fs.statSync(source).size;
+    let bytes: Buffer | null = null;
+    for (const entry of indexPieces(this.root).values()) {
+      if (entry.medium !== "pdf") continue;
+      const copy = path.join(path.dirname(entry.path), pdfFileName(entry.id));
+      if (path.resolve(copy) === source) return entry.id;
+      try {
+        if (fs.statSync(copy).size !== size) continue;
+        bytes ??= fs.readFileSync(source);
+        if (fs.readFileSync(copy).equals(bytes)) return entry.id;
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /** True when `fromPath` already lives inside this library directory. */
+  contains(fromPath: string): boolean {
+    const rel = path.relative(this.root, path.resolve(fromPath));
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  }
+
   load(id: string): Piece {
     const entry = this.resolveEntry(id);
     if (!entry) {
@@ -263,8 +295,7 @@ export class Library {
       path: entry.path,
       medium: "text",
       body,
-      titled: current.titled,
-      title: current.title,
+      ...textTitle(id, current.matterLines, body),
       matterLines: current.matterLines,
     };
   }
@@ -359,13 +390,11 @@ export class Library {
           }
         }
         const split = splitDoc(fs.readFileSync(filePath, "utf8"));
-        const rawTitle = titleFromMatter(split.matterLines);
         return {
           id,
           path: filePath,
           medium,
-          titled: Boolean(rawTitle),
-          title: displayTitle({ id, title: rawTitle, medium }),
+          ...textTitle(id, split.matterLines, split.body),
         };
       })
       .sort((a, b) => a.id.localeCompare(b.id));

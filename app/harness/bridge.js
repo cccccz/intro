@@ -37,6 +37,7 @@ window.intro = {
   openLibrary: () => call("openLibrary", []),
   openLibraryPath: (root) => call("openLibraryPath", [root]),
   listPieces: () => call("listPieces", []),
+  listLinks: () => call("listLinks", []),
   createPiece: (opts) => call("createPiece", [opts]),
   setPieceTitle: (id, title) => call("setPieceTitle", [id, title]),
   loadPiece: (id) => call("loadPiece", [id]),

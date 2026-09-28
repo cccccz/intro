@@ -2,6 +2,7 @@ import type { AiStart, AiJobView, AiModel, AiContext } from "./renderer/ai-types
 import type { Damage, RivetSpec } from "../marks/types.ts";
 import type { EditBatch } from "../write/anchor-edits.ts";
 import type { OverlayRivet, PdfAnchor } from "../pdf/overlay.ts";
+import type { LinkDto } from "../write/links.ts";
 
 export type PieceDto = {
   id: string;
@@ -31,6 +32,11 @@ export type LibraryDto = {
   pieces: ListedPieceDto[];
 };
 
+export type { LinkDto };
+
+/** `existing`: same bytes were already attached, nothing copied. `sourceInLibrary`: the picked file sits inside the library folder. */
+export type AttachPdfResult = { piece: PieceDto; pieces: ListedPieceDto[]; existing: boolean; sourceInLibrary: boolean; sourcePath: string };
+
 export type Ok<T> = { ok: true } & T;
 export type Err = { ok: false; error: string };
 
@@ -52,6 +58,7 @@ export type IntroApi = {
   openLibrary: () => Promise<Ok<{ library: LibraryDto }> | Err>;
   openLibraryPath: (root: string) => Promise<Ok<{ library: LibraryDto }> | Err>;
   listPieces: () => Promise<Ok<{ pieces: ListedPieceDto[] }> | Err>;
+  listLinks: () => Promise<Ok<{ links: LinkDto[] }> | Err>;
   createPiece: (opts?: {
     id?: string;
     body?: string;
@@ -74,7 +81,7 @@ export type IntroApi = {
     clean?: string;
     sideId?: string;
   }) => Promise<Ok<{ host: PieceDto; side: PieceDto; rivetId: string }> | Err>;
-  attachPdf: () => Promise<Ok<{ piece: PieceDto; pieces: LibraryDto["pieces"] }> | Err>;
+  attachPdf: () => Promise<Ok<AttachPdfResult> | Err>;
   readPdf: (id: string) => Promise<Ok<{ data: Uint8Array }> | Err>;
   hangPdfSide: (opts: {
     hostId: string;
@@ -99,6 +106,7 @@ export const IPC = {
   openLibrary: "library:open",
   openLibraryPath: "library:openPath",
   listPieces: "library:list",
+  listLinks: "library:links",
   createPiece: "piece:create",
   setPieceTitle: "piece:setTitle",
   loadPiece: "piece:load",

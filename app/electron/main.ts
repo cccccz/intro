@@ -8,6 +8,7 @@ import { Library } from "../library/index.ts";
 import { editExcerpt, detachSide, dropSide, hangPdfSide, hangSide, persistClean, pieceView } from "../write/loop.ts";
 import type { PdfAnchor } from "../pdf/overlay.ts";
 import { IPC } from "./api.ts";
+import { libraryLinks } from "../write/links.ts";
 import type { EditBatch } from "../write/anchor-edits.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -179,6 +180,14 @@ ipcMain.handle(IPC.listPieces, async () => {
   }
 });
 
+ipcMain.handle(IPC.listLinks, async () => {
+  try {
+    return { ok: true, links: libraryLinks(requireLib()) };
+  } catch (err) {
+    return fail(err);
+  }
+});
+
 ipcMain.handle(IPC.createPiece, async (_e, opts?: { id?: string; body?: string; title?: string }) => {
   try {
     const lib = requireLib();
@@ -258,8 +267,17 @@ ipcMain.handle(IPC.attachPdf, async () => {
       return { ok: false, error: "canceled" };
     }
     const lib = requireLib();
-    const piece = lib.attachPdf(picked.filePaths[0]);
-    return { ok: true, piece: pieceView(piece), pieces: lib.list() };
+    const sourcePath = picked.filePaths[0];
+    const copy = lib.findPdfCopy(sourcePath);
+    const piece = copy ? lib.load(copy) : lib.attachPdf(sourcePath);
+    return {
+      ok: true,
+      piece: pieceView(piece),
+      pieces: lib.list(),
+      existing: Boolean(copy),
+      sourceInLibrary: lib.contains(sourcePath),
+      sourcePath,
+    };
   } catch (err) {
     return fail(err);
   }
