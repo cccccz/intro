@@ -27,9 +27,24 @@ export function rendererDir(): string {
   return path.resolve(here, "../dist/electron/renderer");
 }
 
-export function startHarness(root: string, allowOutsideTemp = false): Promise<HarnessServer> {
-  const session = new HarnessSession(root, allowOutsideTemp);
-  const renderer = rendererDir();
+/** What the server needs from app/harness/session.ts. Parity runs pass a session loaded from another checkout. */
+export type HarnessBackend = {
+  libraryDto(): unknown;
+  call(method: string, args: unknown[]): unknown;
+};
+
+export type HarnessOptions = {
+  allowOutsideTemp?: boolean;
+  rendererDir?: string;
+  bridgePath?: string;
+  session?: HarnessBackend;
+  onCall?: (method: string, args: unknown[], result: unknown) => void;
+};
+
+export function startHarness(root: string, options: boolean | HarnessOptions = false): Promise<HarnessServer> {
+  const opts: HarnessOptions = typeof options === "boolean" ? { allowOutsideTemp: options } : options;
+  const session = opts.session ?? new HarnessSession(root, opts.allowOutsideTemp ?? false);
+  const renderer = opts.rendererDir ?? rendererDir();
   const indexPath = path.join(renderer, "index.html");
   if (!fs.existsSync(indexPath)) {
     throw new Error("阅读页还没构建。先运行 npm run build:renderer。");
@@ -38,7 +53,7 @@ export function startHarness(root: string, allowOutsideTemp = false): Promise<Ha
     '<script type="module" src="./renderer.js"></script>',
     '<script src="./harness-bridge.js"></script>\n  <script type="module" src="./renderer.js"></script>',
   );
-  const bridge = fs.readFileSync(path.join(here, "bridge.js"));
+  const bridge = fs.readFileSync(opts.bridgePath ?? path.join(here, "bridge.js"));
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -47,7 +62,7 @@ export function startHarness(root: string, allowOutsideTemp = false): Promise<Ha
       return;
     }
     if (req.method === "POST" && url.pathname === "/api") {
-      readBody(req).then((raw) => {
+      readBody(req).then(async (raw) => {
         let body: { method?: string; args?: unknown[] };
         try {
           body = JSON.parse(raw || "{}") as { method?: string; args?: unknown[] };
@@ -59,7 +74,10 @@ export function startHarness(root: string, allowOutsideTemp = false): Promise<Ha
           sendJson(res, 400, { ok: false, error: "missing method" });
           return;
         }
-        sendJson(res, 200, session.call(body.method, Array.isArray(body.args) ? body.args : []));
+        const args = Array.isArray(body.args) ? body.args : [];
+        const result = await session.call(body.method, args);
+        opts.onCall?.(body.method, args, result);
+        sendJson(res, 200, result);
       }).catch((err: unknown) => {
         sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
       });

@@ -24,7 +24,7 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 
 ## 测试
 
-现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂）、PDF 侧车锚（QuadPoints 归一、overlay 增删、挂侧边不改 PDF 字节）、显示名（`.intro.md` 文首 YAML `title:`，strip/persist 正文标记时保留 frontmatter；不建 `.meta.json`）、以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何；列内 rendered HTML：先铆点再 markdown-it 子集 + 消毒 + 铆点占位；PDF 可见页窗口：相交页 ± 2 页 overscan；页码 clamp；fit-width 倍率 zoom clamp；分栏宽度 persist clamp）。Source 不跑 markdown。不做像素级 UI snapshot，也不做 Electron E2E。
+现阶段测标记代数（解析 / 嵌套 / 清除可逆 / 交叉视为损坏）、库文件读写、无 UI 的写回路（划选 → `addMark` → 建/开侧边 → 再挂）、PDF 侧车锚（QuadPoints 归一、overlay 增删、挂侧边不改 PDF 字节）、显示名（`.intro.md` 文首 YAML `title:`，strip/persist 正文标记时保留 frontmatter；不建 `.meta.json`）、以及视图像层的纯函数（rivet 范围 → 高亮片段；`rivetId →` 矩形列表的几何；列内 rendered HTML：先铆点再 markdown-it 子集 + 消毒 + 铆点占位；PDF 可见页窗口：相交页 ± 2 页 overscan；页码 clamp；fit-width 倍率 zoom clamp；分栏宽度 persist clamp）。Source 不跑 markdown。不提交像素级 UI snapshot，也不做 Electron E2E。
 
 页面导航另有一条浏览器回路，做法参考 DeepSeek Harness：打开构建后的真实阅读页，而不是再写一套假页面；库只用临时合成目录，拒绝名为 `paul` 的正式库。`npm run test:ui` 用代码沿锚点打开侧边，断言第 22 条的三列窗口、同层共列，以及第 36、42 条的来源滚出视口与 Pin，并对照 `app/harness/goldens/chain.aria.yml` 里的无障碍树。树变了才算界面契约变了。更新对照文本用 `INTRO_UI_REFRESH=1`，不要手改。浏览器默认用系统 Edge（Playwright channel `msedge`），换别的用 `INTRO_BROWSER_CHANNEL`，例如 `chrome`。`npm run ui:drive` 走同一条页面并写出截图和无障碍树到 `app/harness/artifacts/latest`；截图给人或代理看，不作为通过条件。已有副本须显式 `--allow-library` 且自带 `--steps`，默认巡览不会点进一份现成库。Codex 不在这条回路里运行。
 
@@ -33,6 +33,8 @@ TypeScript + Electron + 本地文件。起步用单 package，不拆多包。
 PDF.js 列只对视口附近的页 raster：每页先用 `getViewport` 占位（正确总高度，不铺全文档 canvas）。`IntersectionObserver`（root = `.body-pdf`）给出相交页，再向两侧各扩 `PDF_OVERSCAN_PAGES = 2`；滚远的页拆掉 canvas/overlay，滚回再画（overlay 仍从 sidecar rivets 投影）。Resize 防抖 120ms，只重绘当前窗口，不无条件重绘全书。
 
 标记语法见 [`../app/marks/SYNTAX.md`](../app/marks/SYNTAX.md)。仓库根目录跑 `npm test`（`node:test`，不动 mockup 的 `tsc`，不含浏览器）。改阅读页导航时再跑 `npm run test:ui`。
+
+重构（不打算改行为的改动）跑 `npm run parity`：同一组合成库场景分别跑在 base（默认 `HEAD`，可 `--base main`）和当前工作区上，逐项比较 IPC 调用、库文件、无障碍树、DOM/布局、localStorage 和截图。截图只在本机两侧之间逐像素比较，不提交基线。有差异的场景自动重跑一次，base 自身不稳定的只列出、不算失败。报告在 `app/harness/artifacts/parity/report/report.md`。评估、步骤和已知限制见 [`REFACTOR.md`](REFACTOR.md)。`app/electron/ipc-contract.test.ts` 检查 IPC 契约各份手写副本的方法名一致。
 
 ## 磁盘上的一篇
 
