@@ -10,6 +10,8 @@
  * Both sides use their own renderer build, app/harness/session.ts (library + write code) and bridge.js.
  * Libraries are synthetic copies in the temp directory; the harness refuses a library named paul.
  * Screenshots are compared on this machine only and never committed.
+ * Scenarios that differ run once more on both sides; a difference is reported only if base reproduces itself
+ * and head differs again. The rest is listed as unstable.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -18,8 +20,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedReadingLibrary } from "../fixture.ts";
 import { captureSide, type Side } from "./capture.ts";
-import { compareCaptures } from "./compare.ts";
-import { scenarios } from "./scenarios.ts";
+import { Comparer, findingKey, writeReport, type Finding } from "./compare.ts";
+import { scenarios, type Scenario } from "./scenarios.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "../../..");
@@ -107,25 +109,50 @@ async function main(): Promise<void> {
     const libRoot = path.join(runDir, "library");
     fs.rmSync(args.out, { recursive: true, force: true });
     const failed: string[] = [];
+    const capture = async (side: Side, dir: string, list: readonly Scenario[]): Promise<void> => {
+      const result = await captureSide({ side, scenarios: list, seedDir, libRoot, out: path.join(args.out, dir), channel });
+      failed.push(...result.failed.map((name) => `${dir}/${name}`));
+    };
     for (const side of sides) {
       process.stdout.write(`采集 ${side.label}（${chosen.length} 个场景）…\n`);
-      const result = await captureSide({ side, scenarios: chosen, seedDir, libRoot, out: path.join(args.out, side.label), channel });
-      failed.push(...result.failed.map((name) => `${side.label}/${name}`));
+      await capture(side, side.label, chosen);
     }
-    const { findings } = await compareCaptures({
-      baseDir: path.join(args.out, "base"),
-      headDir: path.join(args.out, "head"),
+    const comparer = await Comparer.open(channel, args.tolerance);
+    let confirmed: Finding[] = [];
+    let unstable: Finding[] = [];
+    try {
+      const first = await comparer.diff(path.join(args.out, "base"), path.join(args.out, "head"));
+      const suspects = new Set(first.map((f) => f.scenario));
+      if (suspects.size) {
+        // A difference counts only if base agrees with itself and head differs again on a second run.
+        const again = chosen.filter((s) => suspects.has(s.name));
+        process.stdout.write(`复核 ${again.length} 个有差异的场景…\n`);
+        await capture(sides[0]!, "base-rerun", again);
+        await capture(sides[1]!, "head-rerun", again);
+        const baseNoise = new Set((await comparer.diff(path.join(args.out, "base"), path.join(args.out, "base-rerun"), suspects)).map(findingKey));
+        const headAgain = new Set((await comparer.diff(path.join(args.out, "base"), path.join(args.out, "head-rerun"), suspects)).map(findingKey));
+        confirmed = first.filter((f) => !baseNoise.has(findingKey(f)) && headAgain.has(findingKey(f)));
+        unstable = first.filter((f) => !confirmed.includes(f));
+      }
+    } finally {
+      await comparer.close();
+    }
+    const report = writeReport({
       reportDir: path.join(args.out, "report"),
-      channel,
-      pixelTolerance: args.tolerance,
+      baseLabel: `${args.base}（${baseSha.slice(0, 10)}）`,
+      headLabel,
+      scenarios: chosen.map((s) => s.name),
+      confirmed,
+      unstable,
+      failed,
     });
-    const report = path.join(args.out, "report", "report.md");
     if (failed.length) process.stdout.write(`场景未跑完：${failed.join(", ")}（见各自 errors.txt）\n`);
-    if (findings.length === 0 && failed.length === 0) {
-      process.stdout.write(`一致：${chosen.length} 个场景没有差异。报告 ${report}\n`);
+    if (unstable.length) process.stdout.write(`不稳定（不计入差异）：${[...new Set(unstable.map(findingKey))].join(", ")}\n`);
+    if (confirmed.length === 0 && failed.length === 0) {
+      process.stdout.write(`一致：${chosen.length} 个场景没有确认的差异。报告 ${report}\n`);
     } else {
       const byScenario = new Map<string, number>();
-      for (const f of findings) byScenario.set(f.scenario, (byScenario.get(f.scenario) ?? 0) + 1);
+      for (const f of confirmed) byScenario.set(f.scenario, (byScenario.get(f.scenario) ?? 0) + 1);
       for (const [name, n] of byScenario) process.stdout.write(`  ${name}: ${n} 处差异\n`);
       process.stdout.write(`有差异。报告 ${report}\n`);
       process.exitCode = 1;

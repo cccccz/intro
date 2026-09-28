@@ -1,18 +1,15 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Page } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 
-export type CompareOptions = {
-  baseDir: string;
-  headDir: string;
-  reportDir: string;
-  channel: string;
-  /** Differing pixels allowed per screenshot. Same machine, same browser: expect 0. */
-  pixelTolerance: number;
+export type Finding = {
+  scenario: string;
+  file: string;
+  kind: "missing" | "text" | "pixels";
+  detail: string;
+  diffPng?: Buffer;
 };
-
-export type Finding = { scenario: string; file: string; kind: "missing" | "text" | "pixels"; detail: string };
 
 const TEXT_KINDS: Array<[suffix: string, label: string]> = [
   ["calls.json", "IPC 调用"],
@@ -23,74 +20,120 @@ const TEXT_KINDS: Array<[suffix: string, label: string]> = [
   [".storage.json", "localStorage"],
 ];
 
-export async function compareCaptures(opts: CompareOptions): Promise<{ findings: Finding[]; report: string }> {
-  fs.rmSync(opts.reportDir, { recursive: true, force: true });
-  fs.mkdirSync(opts.reportDir, { recursive: true });
-  const scenarios = [...new Set([...listDirs(opts.baseDir), ...listDirs(opts.headDir)])].sort();
-  const findings: Finding[] = [];
-  const sections: string[] = [];
-  const rows: string[] = [];
-  const browser = await chromium.launch({ headless: true, channel: opts.channel, args: ["--no-sandbox"] });
-  const page = await browser.newPage();
-  try {
+export class Comparer {
+  private readonly browser: Browser;
+  private readonly page: Page;
+  private readonly tolerance: number;
+
+  private constructor(browser: Browser, page: Page, tolerance: number) {
+    this.browser = browser;
+    this.page = page;
+    this.tolerance = tolerance;
+  }
+
+  static async open(channel: string, pixelTolerance: number): Promise<Comparer> {
+    const browser = await chromium.launch({ headless: true, channel, args: ["--no-sandbox"] });
+    return new Comparer(browser, await browser.newPage(), pixelTolerance);
+  }
+
+  close(): Promise<void> {
+    return this.browser.close();
+  }
+
+  /** Every file that differs between two capture trees, optionally limited to some scenarios. */
+  async diff(baseDir: string, headDir: string, only?: ReadonlySet<string>): Promise<Finding[]> {
+    const scenarios = [...new Set([...listDirs(baseDir), ...listDirs(headDir)])]
+      .filter((name) => !only || only.has(name))
+      .sort();
+    const findings: Finding[] = [];
     for (const scenario of scenarios) {
-      const a = path.join(opts.baseDir, scenario);
-      const b = path.join(opts.headDir, scenario);
-      const files = [...new Set([...listFiles(a), ...listFiles(b)])].sort();
-      const local: Finding[] = [];
-      for (const file of files) {
+      const a = path.join(baseDir, scenario);
+      const b = path.join(headDir, scenario);
+      for (const file of [...new Set([...listFiles(a), ...listFiles(b)])].sort()) {
         const fa = path.join(a, file);
         const fb = path.join(b, file);
         if (!fs.existsSync(fa) || !fs.existsSync(fb)) {
-          local.push({ scenario, file, kind: "missing", detail: fs.existsSync(fa) ? "只在 base" : "只在 head" });
-          continue;
-        }
-        if (file.endsWith(".png")) {
-          const diff = await pixelDiff(page, fa, fb);
-          if (diff.size || diff.count > opts.pixelTolerance) {
-            const out = path.join(opts.reportDir, scenario, file.replace(/\.png$/, ".diff.png"));
-            fs.mkdirSync(path.dirname(out), { recursive: true });
-            if (diff.png) fs.writeFileSync(out, diff.png);
-            local.push({ scenario, file, kind: "pixels", detail: diff.size ?? `${diff.count} 个像素不同` });
+          findings.push({ scenario, file, kind: "missing", detail: fs.existsSync(fa) ? "只在 base" : "只在 head" });
+        } else if (file.endsWith(".png")) {
+          const px = await pixelDiff(this.page, fa, fb);
+          if (px.size || px.count > this.tolerance) {
+            findings.push({ scenario, file, kind: "pixels", detail: px.size ?? `${px.count} 个像素不同`, ...(px.png ? { diffPng: px.png } : {}) });
           }
-          continue;
-        }
-        const ta = fs.readFileSync(fa, "utf8");
-        const tb = fs.readFileSync(fb, "utf8");
-        if (ta !== tb) local.push({ scenario, file, kind: "text", detail: unifiedDiff(fa, fb) });
-      }
-      findings.push(...local);
-      rows.push(`| ${scenario} | ${local.length === 0 ? "一致" : summarize(local)} |`);
-      if (local.length) {
-        sections.push(`## ${scenario}\n`);
-        for (const finding of local) {
-          sections.push(`### ${finding.file}（${labelOf(finding.file)}）\n`);
-          if (finding.kind === "text") sections.push("```diff\n" + finding.detail.trimEnd() + "\n```\n");
-          else if (finding.kind === "pixels") sections.push(`${finding.detail}。差异图：\`${scenario}/${finding.file.replace(/\.png$/, ".diff.png")}\`（红色为不同像素）\n`);
-          else sections.push(`${finding.detail}\n`);
+        } else if (fs.readFileSync(fa, "utf8") !== fs.readFileSync(fb, "utf8")) {
+          findings.push({ scenario, file, kind: "text", detail: unifiedDiff(fa, fb) });
         }
       }
     }
-  } finally {
-    await browser.close();
+    return findings;
+  }
+}
+
+export const findingKey = (f: Pick<Finding, "scenario" | "file">): string => `${f.scenario}/${f.file}`;
+
+export function writeReport(opts: {
+  reportDir: string;
+  baseLabel: string;
+  headLabel: string;
+  scenarios: readonly string[];
+  confirmed: readonly Finding[];
+  unstable: readonly Finding[];
+  failed: readonly string[];
+}): string {
+  fs.rmSync(opts.reportDir, { recursive: true, force: true });
+  fs.mkdirSync(opts.reportDir, { recursive: true });
+  const rows: string[] = [];
+  const sections: string[] = [];
+  for (const scenario of opts.scenarios) {
+    const mine = opts.confirmed.filter((f) => f.scenario === scenario);
+    const shaky = opts.unstable.filter((f) => f.scenario === scenario);
+    const failed = opts.failed.filter((name) => name.endsWith(`/${scenario}`));
+    const cells = [
+      mine.length ? summarize(mine) : "一致",
+      ...(shaky.length ? [`不稳定：${summarize(shaky)}`] : []),
+      ...(failed.length ? [`未跑完：${failed.join("、")}`] : []),
+    ];
+    rows.push(`| ${scenario} | ${cells.join("；")} |`);
+    if (!mine.length) continue;
+    sections.push(`## ${scenario}\n`);
+    for (const finding of mine) {
+      sections.push(`### ${finding.file}（${labelOf(finding.file)}）\n`);
+      if (finding.kind === "text") {
+        sections.push("```diff\n" + finding.detail.trimEnd() + "\n```\n");
+      } else if (finding.kind === "pixels") {
+        const rel = `${scenario}/${finding.file.replace(/\.png$/, ".diff.png")}`;
+        if (finding.diffPng) {
+          fs.mkdirSync(path.join(opts.reportDir, scenario), { recursive: true });
+          fs.writeFileSync(path.join(opts.reportDir, rel), finding.diffPng);
+        }
+        sections.push(`${finding.detail}。差异图：\`${rel}\`（红色为不同像素）\n`);
+      } else {
+        sections.push(`${finding.detail}\n`);
+      }
+    }
   }
   const report = [
     "# parity report",
     "",
-    `base: \`${opts.baseDir}\``,
-    `head: \`${opts.headDir}\``,
+    `base: ${opts.baseLabel}`,
+    `head: ${opts.headLabel}`,
+    "",
+    "「一致」：两侧逐字节相同（截图逐像素）。「不稳定」：同一份 base 连跑两次也不同，或 head 重跑后与 base 相同；只提示，不算差异。",
     "",
     "| 场景 | 结果 |",
     "| --- | --- |",
     ...rows,
     "",
     ...sections,
+    ...(opts.unstable.length
+      ? ["## 不稳定的检查点", "", ...opts.unstable.map((f) => `- ${findingKey(f)}（${labelOf(f.file)}）：${f.kind === "text" ? "文本" : f.detail}`), ""]
+      : []),
   ].join("\n");
-  fs.writeFileSync(path.join(opts.reportDir, "report.md"), report);
-  return { findings, report };
+  const file = path.join(opts.reportDir, "report.md");
+  fs.writeFileSync(file, report);
+  return file;
 }
 
-function labelOf(file: string): string {
+export function labelOf(file: string): string {
   if (file.endsWith(".png")) return "截图";
   return TEXT_KINDS.find(([suffix]) => file.endsWith(suffix))?.[1] ?? "文件";
 }
